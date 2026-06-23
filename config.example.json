@@ -1,0 +1,37 @@
+{
+  "documents": [
+    {
+      "id": "doc1",
+      "name": "和旭电商退货登记",
+      "fileId": "YOUR_FILE_ID_HERE",
+      "readSheetKeywords": ["客退", "退货"],
+      "writeTargets": [
+        {
+          "id": "claim",
+          "name": "快递理赔登记表",
+          "sheetName": "理赔登记"
+        },
+        {
+          "id": "exchange",
+          "name": "售后换货登记表",
+          "sheetName": "换货登记"
+        }
+      ]
+    }
+  ],
+  "defaultDocumentId": "doc1",
+  "tencentDocs": {
+    "apiKey": "YOUR_TENCENT_DOCS_API_KEY",
+    "mcpUrl": "https://docs.qq.com/openapi/mcp"
+  },
+  "llm": {
+    "provider": "deepseek",
+    "apiKey": "YOUR_LLM_API_KEY",
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-chat"
+  },
+  "cache": {
+    "ttl": 300000,
+    "autoRefreshInterval": 1800000
+  }
+}

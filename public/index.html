@@ -1,0 +1,1274 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>综合电商售后处理系统</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #0A0F1A;
+      --bg-secondary: #111827;
+      --bg-card: #151C2C;
+      --bg-hover: #1A2332;
+      --text-primary: #E2E8F0;
+      --text-secondary: #8892B0;
+      --text-muted: #4A5568;
+      --accent: #00D4AA;
+      --accent-dim: rgba(0, 212, 170, 0.1);
+      --accent-glow: rgba(0, 212, 170, 0.25);
+      --border: #1E293B;
+      --border-accent: rgba(0, 212, 170, 0.3);
+      --danger: #F87171;
+      --danger-bg: rgba(248, 113, 113, 0.08);
+      --warning-bg: rgba(251, 191, 36, 0.12);
+      --warning-text: #FBBF24;
+      --font-display: 'Space Grotesk', system-ui, sans-serif;
+      --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+      --radius: 8px;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-display);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .app {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    .header { margin-bottom: 32px; }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .header-tag {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--accent);
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      padding: 3px 10px;
+      border-radius: 4px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+
+    .header h1 {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      line-height: 1.2;
+    }
+
+    .header-sub {
+      font-size: 15px;
+      color: var(--text-secondary);
+      margin-top: 6px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 0;
+    }
+
+    .tab {
+      padding: 10px 20px;
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: color 0.2s, border-color 0.2s;
+      margin-bottom: -1px;
+    }
+
+    .tab:hover { color: var(--text-primary); }
+    .tab.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      margin-bottom: 20px;
+    }
+
+    .card-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+
+    .form-group { margin-bottom: 16px; }
+
+    label {
+      display: block;
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="url"],
+    select,
+    textarea {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-family: var(--font-display);
+      font-size: 14px;
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    select {
+      cursor: pointer;
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238892B0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 36px;
+    }
+
+    textarea {
+      min-height: 80px;
+      resize: vertical;
+      font-family: var(--font-mono);
+    }
+
+    .btn {
+      padding: 10px 24px;
+      border: none;
+      border-radius: 6px;
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s, transform 0.1s;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: var(--bg-primary);
+    }
+
+    .btn-secondary {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .btn:hover { opacity: 0.88; }
+    .btn:active { transform: scale(0.97); }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .search-row {
+      display: flex;
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .search-input-wrap {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-prefix {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .search-input {
+      width: 100%;
+      padding: 13px 16px 13px 36px;
+      font-family: var(--font-mono);
+      font-size: 15px;
+    }
+
+    .doc-selector {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .doc-selector select {
+      width: 240px;
+    }
+
+    .search-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .btn-refresh {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 4px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .btn-refresh:hover { border-color: var(--accent); color: var(--accent); }
+
+    .error-box {
+      display: none;
+      background: var(--danger-bg);
+      border: 1px solid rgba(248, 113, 113, 0.2);
+      border-radius: 6px;
+      padding: 14px 20px;
+      color: var(--danger);
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .error-box.visible { display: block; }
+
+    .success-box {
+      display: none;
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      border-radius: 6px;
+      padding: 14px 20px;
+      color: var(--accent);
+      font-size: 14px;
+      margin-bottom: 20px;
+    }
+    .success-box.visible { display: block; }
+
+    .loading { display: none; text-align: center; padding: 48px 20px; }
+    .loading.visible { display: block; }
+
+    .spinner {
+      display: inline-block;
+      width: 28px;
+      height: 28px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .loading p {
+      margin-top: 14px;
+      color: var(--text-secondary);
+      font-size: 13px;
+      font-family: var(--font-mono);
+    }
+
+    .table-scroll { overflow-x: auto; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    thead th {
+      padding: 11px 20px;
+      text-align: left;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      background: var(--bg-secondary);
+    }
+
+    tbody td {
+      padding: 12px 20px;
+      font-size: 14px;
+      color: var(--text-secondary);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    tbody tr { transition: background 0.12s; }
+    tbody tr:hover { background: var(--bg-hover); }
+    tbody tr:last-child td { border-bottom: none; }
+
+    .tag {
+      display: inline-block;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 4px;
+      background: var(--accent-dim);
+      color: var(--accent);
+      border: 1px solid var(--border-accent);
+    }
+
+    .hl {
+      background: var(--warning-bg);
+      color: var(--warning-text);
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-weight: 600;
+    }
+
+    .preview-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .preview-table th {
+      padding: 8px 14px;
+      font-size: 12px;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+
+    .preview-table td {
+      padding: 10px 14px;
+      font-size: 14px;
+      color: var(--text-primary);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .preview-table .empty-cell {
+      color: var(--danger);
+      font-style: italic;
+    }
+
+    .missing-fields {
+      background: var(--warning-bg);
+      border: 1px solid rgba(251, 191, 36, 0.2);
+      border-radius: 6px;
+      padding: 12px 16px;
+      color: var(--warning-text);
+      font-size: 13px;
+      margin-bottom: 16px;
+    }
+
+    .settings-section {
+      margin-bottom: 28px;
+    }
+
+    .settings-section h3 {
+      font-size: 14px;
+      color: var(--accent);
+      margin-bottom: 14px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .doc-list-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      margin-bottom: 8px;
+    }
+
+    .doc-list-item .name {
+      flex: 1;
+      font-weight: 500;
+    }
+
+    .doc-list-item .actions {
+      display: flex;
+      gap: 6px;
+    }
+
+    .btn-icon {
+      padding: 4px 10px;
+      font-size: 12px;
+    }
+
+    .form-row {
+      display: flex;
+      gap: 14px;
+    }
+
+    .form-row .form-group {
+      flex: 1;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.visible { display: flex; }
+
+    .modal {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      max-width: 520px;
+      width: 90%;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+
+    .modal-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 20px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+      margin-top: 20px;
+    }
+
+    /* ── Toast ── */
+    .toast {
+      display: none;
+      position: fixed;
+      top: 24px;
+      right: 24px;
+      z-index: 2000;
+      padding: 14px 20px;
+      border-radius: 6px;
+      font-size: 14px;
+      max-width: 400px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    }
+    .toast.visible { display: block; }
+    .toast.success {
+      background: var(--accent-dim);
+      border: 1px solid var(--border-accent);
+      color: var(--accent);
+    }
+    .toast.error {
+      background: var(--danger-bg);
+      border: 1px solid rgba(248, 113, 113, 0.2);
+      color: var(--danger);
+    }
+
+    @media (max-width: 640px) {
+      .app { padding: 24px 12px 48px; }
+      .card { padding: 18px; }
+      .search-row { flex-direction: column; }
+      .form-row { flex-direction: column; }
+      .doc-selector select { width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div class="header-top">
+        <span class="header-tag">v2.0</span>
+      </div>
+      <h1>综合电商售后处理系统</h1>
+      <p class="header-sub">查询 · 写入 · 设置 — 数据来源：<code>腾讯文档</code></p>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab active" data-view="query" onclick="switchView('query')">查询</button>
+      <button class="tab" data-view="write" onclick="switchView('write')">写入</button>
+      <button class="tab" data-view="settings" onclick="switchView('settings')">设置</button>
+    </nav>
+
+    <!-- Query View -->
+    <section class="view active" id="view-query">
+      <div class="card">
+        <div class="doc-selector">
+          <label for="queryDocSelect" style="margin:0">文档：</label>
+          <select id="queryDocSelect" onchange="onQueryDocChange()"></select>
+        </div>
+        <div class="search-row">
+          <div class="search-input-wrap">
+            <span class="search-prefix">&gt;</span>
+            <input type="text" class="search-input" id="searchInput" placeholder="输入快递单号..." autocomplete="off" spellcheck="false"/>
+          </div>
+          <button class="btn btn-primary" id="searchBtn" onclick="doSearch()">查询</button>
+        </div>
+        <div class="search-meta">
+          <span id="statusText">ready</span>
+          <button class="btn-refresh" onclick="doRefresh()">刷新数据</button>
+        </div>
+      </div>
+
+      <div class="error-box" id="errorMsg"></div>
+      <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <p>fetching data...</p>
+      </div>
+
+      <div class="card" id="resultPanel" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 class="card-title" style="margin:0">查询结果</h2>
+          <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">共 <em id="totalCount" style="font-style:normal;color:var(--accent);font-weight:600">0</em> 条</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>来源</th><th>登记日期</th><th>快递单号</th><th>商品名称</th>
+                <th>正品</th><th>次品</th><th>次品备注</th><th>备注</th>
+              </tr>
+            </thead>
+            <tbody id="resultBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Write View -->
+    <section class="view" id="view-write">
+      <div class="card">
+        <h2 class="card-title">写入新记录</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>选择文档</label>
+            <select id="writeDocSelect" onchange="onWriteDocChange()"></select>
+          </div>
+          <div class="form-group">
+            <label>选择目标表格</label>
+            <select id="writeTargetSelect"></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>用自然语言描述要写入的内容</label>
+          <textarea id="writeDescription" placeholder="例如：华强北数码3C店 淘宝 订单号123456789 快递单号SF1234567890 丢件登记理赔货值399元 运费20元"></textarea>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" id="extractBtn" onclick="doExtract()">提取并预览</button>
+        </div>
+      </div>
+
+      <div class="error-box" id="writeError"></div>
+      <div class="success-box" id="writeSuccess"></div>
+      <div class="loading" id="writeLoading">
+        <div class="spinner"></div>
+        <p>LLM 正在分析...</p>
+      </div>
+
+      <div class="card" id="previewPanel" style="display:none">
+        <h2 class="card-title">写入预览</h2>
+        <div id="missingFields" class="missing-fields" style="display:none"></div>
+        <div class="table-scroll">
+          <table class="preview-table">
+            <thead><tr id="previewHeader"></tr></thead>
+            <tbody><tr id="previewRow"></tr></tbody>
+          </table>
+        </div>
+        <div style="margin-top:16px;display:flex;gap:10px">
+          <button class="btn btn-primary" onclick="doWrite()">确认写入</button>
+          <button class="btn btn-secondary" onclick="cancelWrite()">取消</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings View -->
+    <section class="view" id="view-settings">
+      <div class="card">
+        <h2 class="card-title">系统设置</h2>
+
+        <div class="settings-section">
+          <h3>腾讯文档配置</h3>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="password" id="cfgTencentKey" placeholder="腾讯文档 API Key"/>
+          </div>
+          <div class="form-group">
+            <label>MCP API 地址</label>
+            <input type="url" id="cfgTencentUrl" placeholder="https://docs.qq.com/openapi/mcp"/>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>LLM 配置</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label>服务商</label>
+              <select id="cfgLlmProvider" onchange="onLlmProviderChange()">
+                <option value="deepseek">DeepSeek</option>
+                <option value="doubao">豆包 (火山引擎)</option>
+                <option value="qwen">通义千问</option>
+                <option value="ollama">Ollama (本地)</option>
+                <option value="openai">OpenAI</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>模型名称</label>
+              <input type="text" id="cfgLlmModel" placeholder="deepseek-chat"/>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="password" id="cfgLlmKey" placeholder="LLM API Key"/>
+          </div>
+          <div class="form-group">
+            <label>Base URL</label>
+            <input type="url" id="cfgLlmUrl" placeholder="https://api.deepseek.com"/>
+          </div>
+          <div class="btn-row" style="margin-top:8px">
+            <button class="btn btn-secondary" onclick="testLLM()">测试连接</button>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>文档配置</h3>
+          <div id="docListContainer"></div>
+          <button class="btn btn-secondary" onclick="addDocument()" style="margin-top:8px">+ 添加文档</button>
+        </div>
+
+        <div class="settings-section">
+          <h3>缓存配置</h3>
+          <div class="form-row">
+            <div class="form-group">
+              <label>缓存有效期（秒）</label>
+              <input type="text" id="cfgCacheTtl" placeholder="300"/>
+            </div>
+            <div class="form-group">
+              <label>自动刷新间隔（秒）</label>
+              <input type="text" id="cfgCacheRefresh" placeholder="1800"/>
+            </div>
+          </div>
+        </div>
+
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="saveSettings()">保存配置</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Document Edit Modal -->
+    <div class="modal-overlay" id="docModal">
+      <div class="modal">
+        <h2 class="modal-title" id="docModalTitle">添加文档</h2>
+        <div class="form-group">
+          <label>文档名称</label>
+          <input type="text" id="modalDocName" placeholder="如：和旭电商退货登记"/>
+        </div>
+        <div class="form-group">
+          <label>腾讯文档 File ID</label>
+          <input type="text" id="modalDocFileId" placeholder="文档 ID"/>
+        </div>
+        <div class="form-group">
+          <label>读取 Sheet 关键词（逗号分隔）</label>
+          <input type="text" id="modalDocKeywords" placeholder="客退,退货"/>
+        </div>
+        <div class="form-group">
+          <label>写入目标（每行一个，格式：显示名|sheet名）</label>
+          <textarea id="modalDocTargets" placeholder="快递理赔登记表|理赔登记&#10;售后换货登记表|换货登记" style="min-height:60px"></textarea>
+        </div>
+        <div class="form-group">
+          <label>
+            <input type="checkbox" id="modalDocDefault" style="width:auto;display:inline;margin-right:6px"/>
+            设为默认文档
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeDocModal()">取消</button>
+          <button class="btn btn-primary" id="docModalSave" onclick="saveDocModal()">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Delete Confirm Modal -->
+    <div class="modal-overlay" id="deleteModal">
+      <div class="modal" style="max-width:400px">
+        <h2 class="modal-title">确认删除</h2>
+        <p id="deleteModalText" style="color:var(--text-secondary);font-size:14px;line-height:1.6"></p>
+        <div class="modal-actions">
+          <button class="btn btn-secondary" onclick="closeDeleteModal()">取消</button>
+          <button class="btn btn-danger" id="deleteConfirmBtn">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    let currentConfig = null;
+    let documents = [];
+    let writePreviewData = null;
+
+    function esc(s) {
+      if (!s) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function hl(text, q) {
+      if (!q) return esc(text);
+      const safe = esc(text);
+      const sq = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return safe.replace(new RegExp('(' + sq + ')', 'gi'), '<span class="hl">$1</span>');
+    }
+
+    function showError(msg, container) {
+      const el = container || $('errorMsg');
+      el.textContent = msg;
+      el.classList.add('visible');
+      setTimeout(() => el.classList.remove('visible'), 8000);
+    }
+
+    function showSuccess(msg) {
+      const el = $('writeSuccess');
+      el.textContent = msg;
+      el.classList.add('visible');
+      setTimeout(() => el.classList.remove('visible'), 8000);
+    }
+
+    function setStatus(t) { $('statusText').textContent = t; }
+
+    function showToast(msg, type) {
+      const el = $('toast');
+      el.textContent = msg;
+      el.className = 'toast ' + (type || 'success') + ' visible';
+      setTimeout(() => el.classList.remove('visible'), 5000);
+    }
+
+    function switchView(viewName) {
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelector('.tab[data-view="' + viewName + '"]').classList.add('active');
+      $('view-' + viewName).classList.add('active');
+
+      if (viewName === 'settings') loadSettings();
+      if (viewName === 'query') loadDocSelector('queryDocSelect');
+      if (viewName === 'write') loadDocSelector('writeDocSelect');
+    }
+
+    async function loadDocSelector(selectId) {
+      try {
+        const resp = await fetch('/api/documents');
+        const data = await resp.json();
+        if (data.success) {
+          documents = data.data;
+          const sel = $(selectId);
+          sel.innerHTML = '';
+          documents.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = d.name + (d.isDefault ? ' (默认)' : '');
+            if (d.isDefault) opt.selected = true;
+            sel.appendChild(opt);
+          });
+
+          if (selectId === 'writeDocSelect') {
+            onWriteDocChange();
+          }
+        }
+      } catch (err) {
+        console.error('加载文档列表失败:', err);
+      }
+    }
+
+    function onQueryDocChange() {
+      setStatus('ready');
+    }
+
+    async function onWriteDocChange() {
+      const docId = $('writeDocSelect').value;
+      const doc = documents.find(d => d.id === docId);
+      if (!doc) return;
+
+      try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        if (data.success) {
+          const docConfig = data.data.documents.find(d => d.id === docId);
+          const targets = (docConfig && docConfig.writeTargets) || [];
+          const sel = $('writeTargetSelect');
+          sel.innerHTML = '';
+          if (targets.length === 0) {
+            sel.innerHTML = '<option value="">未配置写入目标</option>';
+          } else {
+            targets.forEach(t => {
+              const opt = document.createElement('option');
+              opt.value = t.id;
+              opt.textContent = t.name;
+              sel.appendChild(opt);
+            });
+          }
+        }
+      } catch (err) {
+        console.error('加载写入目标失败:', err);
+      }
+    }
+
+    $('searchInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doSearch();
+    });
+
+    async function doSearch() {
+      const q = $('searchInput').value.trim();
+      if (!q) { showError('请输入快递单号'); $('searchInput').focus(); return; }
+
+      const docId = $('queryDocSelect').value;
+      $('resultPanel').style.display = 'none';
+      $('loading').classList.add('visible');
+      $('errorMsg').classList.remove('visible');
+      $('searchBtn').disabled = true;
+      setStatus('querying...');
+
+      try {
+        const resp = await fetch('/api/search?q=' + encodeURIComponent(q) + '&docId=' + encodeURIComponent(docId));
+        const data = await resp.json();
+        $('loading').classList.remove('visible');
+
+        if (!data.success) {
+          showError(data.error || '查询失败');
+          setStatus('error');
+          return;
+        }
+
+        $('totalCount').textContent = data.total;
+        const body = $('resultBody');
+        body.innerHTML = '';
+
+        if (data.total === 0) {
+          body.innerHTML = '<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted)">未找到匹配记录</td></tr>';
+        } else {
+          data.data.forEach(r => {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td><span class="tag">' + esc(r.source) + '</span></td>' +
+              '<td>' + esc(r['登记日期']) + '</td>' +
+              '<td style="color:var(--text-primary);font-family:var(--font-mono);font-size:13px">' + hl(r['快递单号'], q) + '</td>' +
+              '<td>' + esc(r['商品名称']) + '</td>' +
+              '<td>' + esc(r['正品数量']) + '</td>' +
+              '<td>' + esc(r['次品数量']) + '</td>' +
+              '<td>' + esc(r['次品备注']) + '</td>' +
+              '<td>' + esc(r['备注']) + '</td>';
+            body.appendChild(tr);
+          });
+        }
+
+        $('resultPanel').style.display = 'block';
+        setStatus('done — ' + data.total + ' result' + (data.total > 1 ? 's' : ''));
+      } catch (err) {
+        $('loading').classList.remove('visible');
+        showError('网络请求失败');
+        setStatus('network error');
+      } finally {
+        $('searchBtn').disabled = false;
+      }
+    }
+
+    async function doRefresh() {
+      const docId = $('queryDocSelect').value;
+      setStatus('refreshing...');
+      try {
+        const resp = await fetch('/api/refresh?docId=' + encodeURIComponent(docId));
+        const data = await resp.json();
+        if (data.success) {
+          setStatus('synced — ' + data.total + ' records');
+        } else {
+          showError('刷新失败: ' + (data.error || ''));
+          setStatus('error');
+        }
+      } catch {
+        setStatus('network error');
+      }
+    }
+
+    async function doExtract() {
+      const docId = $('writeDocSelect').value;
+      const targetId = $('writeTargetSelect').value;
+      const description = $('writeDescription').value.trim();
+
+      if (!targetId) { showError('请选择目标表格', 'writeError'); return; }
+      if (!description) { showError('请输入描述内容', 'writeError'); return; }
+
+      $('previewPanel').style.display = 'none';
+      $('writeLoading').classList.add('visible');
+      $('writeError').classList.remove('visible');
+      $('writeSuccess').classList.remove('visible');
+      $('extractBtn').disabled = true;
+
+      try {
+        const resp = await fetch('/api/write/extract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ docId, targetId, description })
+        });
+        const data = await resp.json();
+        $('writeLoading').classList.remove('visible');
+
+        if (!data.success) {
+          showError(data.error || '提取失败', 'writeError');
+          return;
+        }
+
+        writePreviewData = data.data;
+
+        const headers = data.data.headers;
+        const values = data.data.values;
+
+        $('previewHeader').innerHTML = headers.map(h => '<th>' + esc(h) + '</th>').join('');
+        $('previewRow').innerHTML = values.map(v => {
+          if (!v || !v.trim()) return '<td class="empty-cell">(空)</td>';
+          return '<td>' + esc(v) + '</td>';
+        }).join('');
+
+        if (data.data.missing && data.data.missing.length > 0) {
+          const el = $('missingFields');
+          el.style.display = 'block';
+          el.textContent = '⚠ 以下字段未填写，建议补充: ' + data.data.missing.join(', ');
+        } else {
+          $('missingFields').style.display = 'none';
+        }
+
+        $('previewPanel').style.display = 'block';
+      } catch (err) {
+        $('writeLoading').classList.remove('visible');
+        showError('网络请求失败: ' + err.message, 'writeError');
+      } finally {
+        $('extractBtn').disabled = false;
+      }
+    }
+
+    async function doWrite() {
+      if (!writePreviewData) return;
+
+      const docId = $('writeDocSelect').value;
+
+      try {
+        const resp = await fetch('/api/write/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            docId,
+            targetFileId: writePreviewData.targetFileId,
+            sheetId: writePreviewData.sheetId,
+            targetRow: writePreviewData.targetRow,
+            values: writePreviewData.values
+          })
+        });
+        const data = await resp.json();
+
+        if (!data.success) {
+          showError(data.error || '写入失败', 'writeError');
+          return;
+        }
+
+        showSuccess(data.message);
+        $('previewPanel').style.display = 'none';
+        $('writeDescription').value = '';
+        writePreviewData = null;
+      } catch (err) {
+        showError('网络请求失败: ' + err.message, 'writeError');
+      }
+    }
+
+    function cancelWrite() {
+      $('previewPanel').style.display = 'none';
+      writePreviewData = null;
+    }
+
+    async function loadSettings() {
+      try {
+        const resp = await fetch('/api/config');
+        const data = await resp.json();
+        if (!data.success) return;
+
+        currentConfig = data.data;
+
+        $('cfgTencentKey').value = currentConfig.tencentDocs.apiKey || '';
+        $('cfgTencentUrl').value = currentConfig.tencentDocs.mcpUrl || '';
+
+        $('cfgLlmProvider').value = currentConfig.llm.provider || 'deepseek';
+        $('cfgLlmModel').value = currentConfig.llm.model || '';
+        $('cfgLlmKey').value = currentConfig.llm.apiKey || '';
+        $('cfgLlmUrl').value = currentConfig.llm.baseUrl || '';
+
+        $('cfgCacheTtl').value = (currentConfig.cache.ttl || 300000) / 1000;
+        $('cfgCacheRefresh').value = (currentConfig.cache.autoRefreshInterval || 1800000) / 1000;
+
+        renderDocList();
+      } catch (err) {
+        console.error('加载设置失败:', err);
+      }
+    }
+
+    function renderDocList() {
+      const container = $('docListContainer');
+      container.innerHTML = '';
+
+      if (!currentConfig.documents || currentConfig.documents.length === 0) {
+        container.innerHTML = '<p style="color:var(--text-muted);font-size:13px">暂无文档配置</p>';
+        return;
+      }
+
+      currentConfig.documents.forEach((doc, idx) => {
+        const item = document.createElement('div');
+        item.className = 'doc-list-item';
+        const isDefault = doc.id === currentConfig.defaultDocumentId;
+        item.innerHTML =
+          '<span class="name">' + esc(doc.name) + ' ' + (isDefault ? '<span class="tag">默认</span>' : '') + '</span>' +
+          '<div class="actions">' +
+            '<button class="btn btn-secondary btn-icon" onclick="editDocument(' + idx + ')">编辑</button>' +
+            '<button class="btn btn-secondary btn-icon" onclick="deleteDocument(' + idx + ')">删除</button>' +
+          '</div>';
+        container.appendChild(item);
+      });
+    }
+
+    let docModalEditIdx = -1;
+
+    function addDocument() {
+      docModalEditIdx = -1;
+      $('docModalTitle').textContent = '添加文档';
+      $('modalDocName').value = '';
+      $('modalDocFileId').value = '';
+      $('modalDocKeywords').value = '客退,退货';
+      $('modalDocTargets').value = '';
+      $('modalDocDefault').checked = !currentConfig.defaultDocumentId;
+      $('docModal').classList.add('visible');
+      $('modalDocName').focus();
+    }
+
+    function editDocument(idx) {
+      const doc = currentConfig.documents[idx];
+      docModalEditIdx = idx;
+      $('docModalTitle').textContent = '编辑文档';
+      $('modalDocName').value = doc.name || '';
+      $('modalDocFileId').value = doc.fileId || '';
+      $('modalDocKeywords').value = (doc.readSheetKeywords || []).join(',');
+      $('modalDocTargets').value = (doc.writeTargets || []).map(t => t.name + '|' + t.sheetName).join('\n');
+      $('modalDocDefault').checked = (doc.id === currentConfig.defaultDocumentId);
+      $('docModal').classList.add('visible');
+    }
+
+    function closeDocModal() {
+      $('docModal').classList.remove('visible');
+    }
+
+    function saveDocModal() {
+      const name = $('modalDocName').value.trim();
+      const fileId = $('modalDocFileId').value.trim();
+      const keywords = $('modalDocKeywords').value.trim();
+      const targetsStr = $('modalDocTargets').value.trim();
+      const isDefault = $('modalDocDefault').checked;
+
+      if (!name) { showToast('请输入文档名称', 'error'); return; }
+      if (!fileId) { showToast('请输入 File ID', 'error'); return; }
+
+      const writeTargets = targetsStr ? targetsStr.split('\n').filter(s => s.trim()).map((s, i) => {
+        const parts = s.split('|').map(p => p.trim());
+        return {
+          id: 'target' + i,
+          name: parts[0] || parts[1] || '',
+          sheetName: parts[1] || parts[0] || ''
+        };
+      }) : [];
+
+      const docData = {
+        name: name,
+        fileId: fileId,
+        readSheetKeywords: keywords ? keywords.split(',').map(s => s.trim()).filter(Boolean) : ['客退', '退货'],
+        writeTargets: writeTargets
+      };
+
+      if (docModalEditIdx >= 0) {
+        const doc = currentConfig.documents[docModalEditIdx];
+        Object.assign(doc, docData);
+      } else {
+        docData.id = 'doc' + Date.now();
+        currentConfig.documents.push(docData);
+        if (!currentConfig.defaultDocumentId) {
+          currentConfig.defaultDocumentId = docData.id;
+        }
+      }
+
+      if (isDefault) {
+        const docId = docModalEditIdx >= 0 ? currentConfig.documents[docModalEditIdx].id : docData.id;
+        currentConfig.defaultDocumentId = docId;
+      }
+
+      closeDocModal();
+      renderDocList();
+      showToast('文档已保存，点击下方"保存配置"生效');
+    }
+
+    let deleteTargetIdx = -1;
+
+    function deleteDocument(idx) {
+      deleteTargetIdx = idx;
+      $('deleteModalText').textContent = '确认删除文档"' + currentConfig.documents[idx].name + '"？此操作需点击下方"保存配置"才会真正生效。';
+      $('deleteConfirmBtn').onclick = function() {
+        const docId = currentConfig.documents[deleteTargetIdx].id;
+        currentConfig.documents.splice(deleteTargetIdx, 1);
+        if (currentConfig.defaultDocumentId === docId) {
+          currentConfig.defaultDocumentId = currentConfig.documents[0] ? currentConfig.documents[0].id : '';
+        }
+        closeDeleteModal();
+        renderDocList();
+        showToast('文档已删除，点击下方"保存配置"生效');
+      };
+      $('deleteModal').classList.add('visible');
+    }
+
+    function closeDeleteModal() {
+      $('deleteModal').classList.remove('visible');
+    }
+
+    function onLlmProviderChange() {
+      const provider = $('cfgLlmProvider').value;
+      const presets = {
+        deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+        doubao: { url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k' },
+        qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+        ollama: { url: 'http://localhost:11434/v1', model: 'qwen2.5:7b' },
+        openai: { url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
+      };
+      const preset = presets[provider];
+      if (preset) {
+        $('cfgLlmUrl').value = preset.url;
+        $('cfgLlmModel').value = preset.model;
+      }
+    }
+
+    async function testLLM() {
+      const llmConfig = {
+        provider: $('cfgLlmProvider').value,
+        apiKey: $('cfgLlmKey').value.includes('****') ? (currentConfig.llm.apiKey || '') : $('cfgLlmKey').value,
+        baseUrl: $('cfgLlmUrl').value,
+        model: $('cfgLlmModel').value
+      };
+
+      try {
+        const resp = await fetch('/api/llm/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ llmConfig })
+        });
+        const data = await resp.json();
+        if (data.success) {
+          showToast('✓ ' + data.message, 'success');
+        } else {
+          showToast('✗ ' + data.message, 'error');
+        }
+      } catch (err) {
+        showToast('✗ 请求失败: ' + err.message, 'error');
+      }
+    }
+
+    async function saveSettings() {
+      const config = {
+        documents: currentConfig.documents,
+        defaultDocumentId: currentConfig.defaultDocumentId,
+        tencentDocs: {
+          apiKey: $('cfgTencentKey').value,
+          mcpUrl: $('cfgTencentUrl').value
+        },
+        llm: {
+          provider: $('cfgLlmProvider').value,
+          apiKey: $('cfgLlmKey').value,
+          baseUrl: $('cfgLlmUrl').value,
+          model: $('cfgLlmModel').value
+        },
+        cache: {
+          ttl: parseInt($('cfgCacheTtl').value) * 1000 || 300000,
+          autoRefreshInterval: parseInt($('cfgCacheRefresh').value) * 1000 || 1800000
+        }
+      };
+
+      try {
+        const resp = await fetch('/api/config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(config)
+        });
+        const data = await resp.json();
+        if (data.success) {
+          showToast('配置已保存');
+          loadSettings();
+        } else {
+          showToast('保存失败: ' + (data.error || ''), 'error');
+        }
+      } catch (err) {
+        showToast('保存失败: ' + err.message, 'error');
+      }
+    }
+
+    loadDocSelector('queryDocSelect');
+  </script>
+</body>
+</html>

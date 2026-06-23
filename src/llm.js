@@ -1,0 +1,73 @@
+const OpenAI = require('openai');
+
+function createLLMClient(llmConfig) {
+  if (!llmConfig.apiKey && llmConfig.provider !== 'ollama') {
+    throw new Error(`LLM API Key 未配置 (provider: ${llmConfig.provider})`);
+  }
+
+  const client = new OpenAI({
+    apiKey: llmConfig.apiKey || 'ollama',
+    baseURL: llmConfig.baseUrl,
+    timeout: 30000,
+    maxRetries: 2
+  });
+
+  return {
+    client,
+    model: llmConfig.model,
+    provider: llmConfig.provider
+  };
+}
+
+async function chatJSON(llmConfig, systemPrompt, userMessage) {
+  const { client, model } = createLLMClient(llmConfig);
+
+  const completion = await client.chat.completions.create({
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage }
+    ],
+    temperature: 0,
+    response_format: { type: 'json_object' },
+    max_tokens: 2048
+  });
+
+  const content = completion.choices[0].message.content;
+
+  if (!content || !content.trim()) {
+    throw new Error('LLM 返回空内容，请重试');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch (e) {
+    const match = content.match(/\{[\s\S]*\}/);
+    if (match) {
+      parsed = JSON.parse(match[0]);
+    } else {
+      throw new Error('LLM 输出无法解析为 JSON: ' + content.substring(0, 200));
+    }
+  }
+
+  return parsed;
+}
+
+async function testConnection(llmConfig) {
+  try {
+    const { client, model } = createLLMClient(llmConfig);
+    const completion = await client.chat.completions.create({
+      model,
+      messages: [{ role: 'user', content: '请回复"ok"' }],
+      max_tokens: 10,
+      temperature: 0
+    });
+    const text = completion.choices[0].message.content;
+    return { ok: true, message: `连接成功，模型回复: ${text}` };
+  } catch (err) {
+    return { ok: false, message: err.message };
+  }
+}
+
+module.exports = { createLLMClient, chatJSON, testConnection };
