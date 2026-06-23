@@ -107,7 +107,7 @@ async function initMcp(mcpUrl, apiKey, state) {
   const { sessionId } = await callMcpApi(mcpUrl, apiKey, 'initialize', {
     protocolVersion: '2024-11-05',
     capabilities: {},
-    clientInfo: { name: 'kuaidi-after-sales', version: '2.0.0' }
+    clientInfo: { name: 'kuaidi-after-sales', version: '2.0.1' }
   }, null);
   state.mcpSessionId = sessionId;
   sendMcpNotification(mcpUrl, apiKey, 'notifications/initialized', {}, sessionId);
