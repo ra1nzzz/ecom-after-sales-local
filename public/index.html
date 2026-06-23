@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>综合电商售后处理系统</title>
+  <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
@@ -27,6 +28,25 @@
       --font-display: 'Space Grotesk', system-ui, sans-serif;
       --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
       --radius: 8px;
+    }
+
+    [data-theme="light"] {
+      --bg-primary: #F8FAFC;
+      --bg-secondary: #F1F5F9;
+      --bg-card: #FFFFFF;
+      --bg-hover: #F1F5F9;
+      --text-primary: #1E293B;
+      --text-secondary: #64748B;
+      --text-muted: #94A3B8;
+      --accent: #00A884;
+      --accent-dim: rgba(0,168,132,0.1);
+      --accent-glow: rgba(0,168,132,0.18);
+      --border: #E2E8F0;
+      --border-accent: rgba(0,168,132,0.35);
+      --danger: #DC2626;
+      --danger-bg: rgba(220,38,38,0.06);
+      --warning-bg: rgba(217,119,6,0.1);
+      --warning-text: #B45309;
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -160,7 +180,7 @@
     select {
       cursor: pointer;
       appearance: none;
-      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238892B0' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 12px center;
       padding-right: 36px;
@@ -188,6 +208,8 @@
       background: var(--accent);
       color: var(--bg-primary);
     }
+
+    [data-theme="light"] .btn-primary { color: #FFFFFF; }
 
     .btn-secondary {
       background: var(--bg-hover);
@@ -522,6 +544,20 @@
       color: var(--danger);
     }
 
+    .log-entry {
+      display: grid;
+      grid-template-columns: 70px 60px 50px 1fr;
+      gap: 8px;
+      padding: 4px 0;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+    .log-entry .log-time { color: var(--text-muted); }
+    .log-entry .log-type { color: var(--accent); }
+    .log-entry .log-result.success { color: var(--accent); }
+    .log-entry .log-result.error { color: var(--danger); }
+    .log-entry .log-detail { color: var(--text-secondary); word-break: break-all; }
+
     @media (max-width: 640px) {
       .app { padding: 24px 12px 48px; }
       .card { padding: 18px; }
@@ -536,6 +572,7 @@
     <header class="header">
       <div class="header-top">
         <span class="header-tag">v2.0</span>
+        <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="切换主题" style="margin-left:auto;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:14px;color:var(--text-secondary);transition:all 0.2s;">🌙</button>
       </div>
       <h1>综合电商售后处理系统</h1>
       <p class="header-sub">查询 · 写入 · 设置 — 数据来源：<code>腾讯文档</code></p>
@@ -631,6 +668,7 @@
             <tbody><tr id="previewRow"></tr></tbody>
           </table>
         </div>
+        <div id="debugInfo" style="display:none;margin-top:12px;padding:10px 14px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);"></div>
         <div style="margin-top:16px;display:flex;gap:10px">
           <button class="btn btn-primary" onclick="doWrite()">确认写入</button>
           <button class="btn btn-secondary" onclick="cancelWrite()">取消</button>
@@ -759,10 +797,30 @@
 
     <!-- Toast -->
     <div class="toast" id="toast"></div>
+
+    <div class="card" id="logPanel" style="position:fixed;bottom:0;left:0;right:0;max-height:240px;overflow-y:auto;z-index:900;display:none;border-radius:0;border-left:none;border-right:none;border-bottom:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;position:sticky;top:0;background:var(--bg-card);padding:8px 0;z-index:1;">
+        <h2 class="card-title" style="margin:0;font-size:13px;">操作日志</h2>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-refresh" onclick="clearLog()">清空</button>
+          <button class="btn-refresh" onclick="toggleLogPanel()">收起</button>
+        </div>
+      </div>
+      <div id="logList" style="font-family:var(--font-mono);font-size:12px;"></div>
+    </div>
+    <button class="btn-refresh" id="logToggleBtn" onclick="toggleLogPanel()" style="position:fixed;bottom:16px;right:24px;z-index:901;padding:6px 14px;">日志</button>
   </div>
 
   <script>
     const $ = id => document.getElementById(id);
+
+    function toggleTheme() {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      $('themeToggleBtn').textContent = next === 'dark' ? '🌙' : '☀️';
+      localStorage.setItem('theme', next);
+    }
 
     let currentConfig = null;
     let documents = [];
@@ -802,6 +860,35 @@
       el.className = 'toast ' + (type || 'success') + ' visible';
       setTimeout(() => el.classList.remove('visible'), 5000);
     }
+
+    let operationLogs = [];
+    function addLog(type, result, detail) {
+      const now = new Date();
+      const time = now.toLocaleTimeString('zh-CN', { hour12: false });
+      operationLogs.unshift({ time, type, result, detail });
+      if (operationLogs.length > 10) operationLogs.pop();
+      renderLogs();
+    }
+    function renderLogs() {
+      const list = $('logList');
+      if (operationLogs.length === 0) {
+        list.innerHTML = '<div style="color:var(--text-muted);padding:8px 0;">暂无操作记录</div>';
+        return;
+      }
+      list.innerHTML = operationLogs.map(log =>
+        '<div class="log-entry">' +
+        '<span class="log-time">' + esc(log.time) + '</span>' +
+        '<span class="log-type">' + esc(log.type) + '</span>' +
+        '<span class="log-result ' + (log.result === '成功' ? 'success' : 'error') + '">' + esc(log.result) + '</span>' +
+        '<span class="log-detail">' + esc(log.detail) + '</span>' +
+        '</div>'
+      ).join('');
+    }
+    function toggleLogPanel() {
+      const panel = $('logPanel');
+      if (panel.style.display === 'none') { panel.style.display = 'block'; } else { panel.style.display = 'none'; }
+    }
+    function clearLog() { operationLogs = []; renderLogs(); }
 
     function switchView(viewName) {
       document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -894,6 +981,8 @@
 
         if (!data.success) {
           showError(data.error || '查询失败');
+          showToast(data.error || '查询失败', 'error');
+          addLog('查询', '失败', data.error || '查询失败');
           setStatus('error');
           return;
         }
@@ -922,9 +1011,13 @@
 
         $('resultPanel').style.display = 'block';
         setStatus('done — ' + data.total + ' result' + (data.total > 1 ? 's' : ''));
+        showToast('查询完成，共 ' + data.total + ' 条结果', 'success');
+        addLog('查询', '成功', '单号: ' + q + '，共 ' + data.total + ' 条');
       } catch (err) {
         $('loading').classList.remove('visible');
         showError('网络请求失败');
+        showToast('网络请求失败', 'error');
+        addLog('查询', '失败', '网络错误');
         setStatus('network error');
       } finally {
         $('searchBtn').disabled = false;
@@ -939,12 +1032,18 @@
         const data = await resp.json();
         if (data.success) {
           setStatus('synced — ' + data.total + ' records');
+          showToast('刷新成功，共 ' + data.total + ' 条记录', 'success');
+          addLog('刷新', '成功', '共 ' + data.total + ' 条记录');
         } else {
           showError('刷新失败: ' + (data.error || ''));
+          showToast('刷新失败: ' + (data.error || ''), 'error');
+          addLog('刷新', '失败', data.error || '刷新失败');
           setStatus('error');
         }
       } catch {
         setStatus('network error');
+        showToast('刷新失败: 网络错误', 'error');
+        addLog('刷新', '失败', '网络错误');
       }
     }
 
@@ -973,6 +1072,8 @@
 
         if (!data.success) {
           showError(data.error || '提取失败', 'writeError');
+          showToast(data.error || '提取失败', 'error');
+          addLog('提取', '失败', data.error || '提取失败');
           return;
         }
 
@@ -995,10 +1096,22 @@
           $('missingFields').style.display = 'none';
         }
 
+        const d = data.data.debug;
+        if (d) {
+          $('debugInfo').style.display = 'block';
+          $('debugInfo').innerHTML = '识别方式: <span style="color:var(--accent)">' + esc(d.method) + '</span> | 耗时: ' + d.parseTime + 'ms | 非空字段: ' + d.nonEmptyCount + '/' + d.headerCount + (d.llmError ? ' | LLM错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>' : '');
+        } else {
+          $('debugInfo').style.display = 'none';
+        }
+
         $('previewPanel').style.display = 'block';
+        showToast('提取完成（' + (data.data.debug ? data.data.debug.method : '') + '）', 'success');
+        addLog('提取', '成功', '方式: ' + (data.data.debug?.method || '未知') + '，非空字段: ' + (data.data.debug?.nonEmptyCount || 0));
       } catch (err) {
         $('writeLoading').classList.remove('visible');
         showError('网络请求失败: ' + err.message, 'writeError');
+        showToast('网络请求失败: ' + err.message, 'error');
+        addLog('提取', '失败', '网络错误: ' + err.message);
       } finally {
         $('extractBtn').disabled = false;
       }
@@ -1025,15 +1138,21 @@
 
         if (!data.success) {
           showError(data.error || '写入失败', 'writeError');
+          showToast(data.error || '写入失败', 'error');
+          addLog('写入', '失败', data.error || '写入失败');
           return;
         }
 
         showSuccess(data.message);
+        showToast(data.message, 'success');
+        addLog('写入', '成功', '行: ' + writePreviewData.targetRow + '，' + data.message);
         $('previewPanel').style.display = 'none';
         $('writeDescription').value = '';
         writePreviewData = null;
       } catch (err) {
         showError('网络请求失败: ' + err.message, 'writeError');
+        showToast('网络请求失败: ' + err.message, 'error');
+        addLog('写入', '失败', '网络错误: ' + err.message);
       }
     }
 

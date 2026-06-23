@@ -291,7 +291,11 @@ async function handleRequest(req, res) {
       }
       const headers = tencentDocs.parseCsvLine(lines[0]);
 
-      const { values, missing } = await extractRowData(config.llm, headers, target.name, description);
+      const extractResult = await extractRowData(config.llm, headers, target.name, description);
+      if (extractResult.nonEmptyCount === 0) {
+        sendJSON(res, 400, { success: false, error: '未能从描述中提取到任何有效数据，请检查输入内容' });
+        return;
+      }
 
       let emptyRowIndex = lines.length;
       for (let i = 1; i < lines.length; i++) {
@@ -307,13 +311,22 @@ async function handleRequest(req, res) {
         success: true,
         data: {
           headers,
-          values,
-          missing,
+          values: extractResult.values,
+          missing: extractResult.missing,
           targetRow: emptyRowIndex,
           sheetName: sheet.sheet_name,
           sheetId: sheet.sheet_id,
           targetFileId: targetFileId,
-          preview: buildPreviewText(headers, values)
+          preview: buildPreviewText(headers, extractResult.values),
+          debug: {
+            method: extractResult.method,
+            parseTime: extractResult.parseTime,
+            llmRaw: extractResult.raw,
+            llmError: extractResult.llmError,
+            nonEmptyCount: extractResult.nonEmptyCount,
+            headerCount: headers.length,
+            totalLines: lines.length
+          }
         }
       });
     } catch (err) {
@@ -338,6 +351,12 @@ async function handleRequest(req, res) {
       return;
     }
 
+    const nonEmptyCount = values.filter(v => v && String(v).trim()).length;
+    if (nonEmptyCount === 0) {
+      sendJSON(res, 400, { success: false, error: '写入数据全为空，已阻止写入' });
+      return;
+    }
+
     const writeDocId = targetFileId || doc.fileId;
 
     try {
@@ -354,8 +373,8 @@ async function handleRequest(req, res) {
         writeDocId, sheetId, targetRow + 1, sheet.col_count
       );
       const checkLines = checkCsv.split('\n').filter(l => l.trim());
-      if (checkLines.length > targetRow + 1) {
-        const rowCells = tencentDocs.parseCsvLine(checkLines[targetRow + 1] || '');
+      if (checkLines.length > targetRow) {
+        const rowCells = tencentDocs.parseCsvLine(checkLines[targetRow] || '');
         const hasData = rowCells.some(c => c && c.trim());
         if (hasData) {
           sendJSON(res, 409, { success: false, error: '目标行已有数据，可能正在被其他人使用，请重新提取' });

@@ -271,9 +271,10 @@ async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
   const state = getDocState(fileId);
   await initMcp(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state);
 
+  const MCP_ROW_OFFSET = 1;
   const cellValues = values.map((val, idx) => ({
-    row: startRow,
-    col: idx,
+    row: startRow + MCP_ROW_OFFSET,
+    col: idx + MCP_ROW_OFFSET,
     value_type: 'STRING',
     string_value: String(val)
   }));

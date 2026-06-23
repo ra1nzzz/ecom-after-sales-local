@@ -1,41 +1,142 @@
 const { chatJSON } = require('./llm');
 
 function buildSystemPrompt(headers, tableName) {
-  return `你是一个电商售后数据录入助手。
-用户要向"${tableName}"写入一条新记录。
-表格的列标题如下：
-${JSON.stringify(headers)}
+  return '你是一个电商售后数据录入助手。\n' +
+    '用户要向"' + tableName + '"写入一条新记录。\n' +
+    '表格的列标题如下：\n' +
+    JSON.stringify(headers) + '\n\n' +
+    '【输入格式说明】\n' +
+    '用户通常以空格分隔不同字段，字段名可能直接出现在输入中。\n' +
+    '例如"订单号123456789"表示"订单号"列的值为"123456789"。\n' +
+    '例如"快递单号 SF1234567890"表示"快递单号"列的值为"SF1234567890"。\n\n' +
+    '【输出规则】\n' +
+    '1. 只输出 JSON，不要输出任何解释、markdown 标记或多余文字。\n' +
+    '2. JSON 的 key 必须与上面的列标题完全一致。\n' +
+    '3. 如果某个列的值无法从描述中提取，对应值填空字符串 ""。\n' +
+    '4. 不要编造未提及的信息。\n' +
+    '5. 金额字段只填数字，不带"元"字。\n' +
+    '6. 日期字段格式为 YYYY-MM-DD。\n' +
+    '7. 识别输入中直接出现的字段名（如"订单号""快递单号""货值"等），提取其后的值。\n\n' +
+    '【常见别名】\n' +
+    '- "单号" → 快递单号\n' +
+    '- "金额/价格" → 货值\n' +
+    '- "日期" → 登记日期\n\n' +
+    '【示例1】\n' +
+    '列标题：["登记日期","店铺名称","平台","订单号","快递单号","理赔类型","货值","运费","备注"]\n' +
+    '用户输入：华强北数码3C店 淘宝 订单号123456789 快递单号SF1234567890 丢件登记理赔货值399元 运费20元\n' +
+    '输出：{"登记日期":"","店铺名称":"华强北数码3C店","平台":"淘宝","订单号":"123456789","快递单号":"SF1234567890","理赔类型":"丢件","货值":"399","运费":"20","备注":""}\n\n' +
+    '【示例2】\n' +
+    '列标题：["登记日期","快递单号","商品名称","正品数量","次品数量","次品备注","备注"]\n' +
+    '用户输入：2026-06-23 快递单号YT9876543210 蓝牙耳机 正品2 次品1 包装破损\n' +
+    '输出：{"登记日期":"2026-06-23","快递单号":"YT9876543210","商品名称":"蓝牙耳机","正品数量":"2","次品数量":"1","次品备注":"包装破损","备注":""}\n\n' +
+    '【示例3】\n' +
+    '列标题：["登记日期","店铺名称","平台","订单号","快递单号","理赔类型","货值","运费","备注"]\n' +
+    '用户输入：店铺 和旭数码 平台 拼多多 订单号 9988776655 快递单号 JJD00998877 破损理赔 货值 158 运费 12\n' +
+    '输出：{"登记日期":"","店铺名称":"和旭数码","平台":"拼多多","订单号":"9988776655","快递单号":"JJD00998877","理赔类型":"破损","货值":"158","运费":"12","备注":""}';
+}
 
-请从用户的自然语言描述中，提取每个列标题对应的值，以 JSON 格式输出。
+function cleanValue(val) {
+  if (!val) return '';
+  let v = val.trim();
+  v = v.replace(/元$/, '');
+  v = v.replace(/^[:：]+/, '');
+  return v.trim();
+}
 
-【输出规则】
-1. 只输出 JSON，不要输出任何解释、markdown 标记或多余文字。
-2. JSON 的 key 必须与上面的列标题完全一致。
-3. 如果某个列的值无法从描述中提取，对应值填空字符串 ""。
-4. 不要编造未提及的信息。
-5. 金额字段只填数字，不带"元"字。
-6. 日期字段格式为 YYYY-MM-DD。
-
-【示例】
-列标题：["登记日期","店铺名称","平台","订单号","快递单号","理赔类型","货值","运费","备注"]
-用户输入：华强北数码3C店 淘宝 订单号123456789 快递单号SF1234567890 丢件登记理赔货值399元 运费20元
-输出：{"登记日期":"","店铺名称":"华强北数码3C店","平台":"淘宝","订单号":"123456789","快递单号":"SF1234567890","理赔类型":"丢件","货值":"399","运费":"20","备注":""}`;
+function ruleBasedExtract(headers, description) {
+  const result = {};
+  headers.forEach(h => { result[h] = ''; });
+  const sortedHeaders = [...headers].filter(h => h && h.length > 0)
+    .sort((a, b) => b.length - a.length);
+  const aliases = {
+    '单号': '快递单号', '金额': '货值', '价格': '货值',
+    '日期': '登记日期', '数量': '正品数量'
+  };
+  const tokens = description.split(/\s+/).filter(t => t.length > 0);
+  let currentHeader = null;
+  let valueParts = [];
+  function flushCurrent() {
+    if (currentHeader && valueParts.length > 0) {
+      result[currentHeader] = cleanValue(valueParts.join(' '));
+    }
+    valueParts = [];
+  }
+  for (const token of tokens) {
+    let matchedHeader = null;
+    let remainder = '';
+    for (const h of sortedHeaders) {
+      if (token === h) { matchedHeader = h; remainder = ''; break; }
+    }
+    if (!matchedHeader) {
+      for (const h of sortedHeaders) {
+        if (token.length > h.length && token.startsWith(h)) {
+          matchedHeader = h; remainder = token.substring(h.length); break;
+        }
+      }
+    }
+    if (!matchedHeader) {
+      for (const [alias, target] of Object.entries(aliases)) {
+        if (headers.includes(target)) {
+          if (token === alias) { matchedHeader = target; remainder = ''; break; }
+          if (token.length > alias.length && token.startsWith(alias)) {
+            matchedHeader = target; remainder = token.substring(alias.length); break;
+          }
+        }
+      }
+    }
+    if (!matchedHeader) {
+      for (const h of sortedHeaders) {
+        const idx = token.indexOf(h);
+        if (idx >= 0 && idx + h.length < token.length) {
+          const after = token.substring(idx + h.length);
+          if (/^[:：\-—=]/.test(after)) {
+            matchedHeader = h; remainder = after.replace(/^[:：\-—=]+/, ''); break;
+          }
+        }
+      }
+    }
+    if (matchedHeader) {
+      flushCurrent();
+      currentHeader = matchedHeader;
+      if (remainder) valueParts.push(remainder);
+    } else if (currentHeader) {
+      valueParts.push(token);
+    }
+  }
+  flushCurrent();
+  return result;
 }
 
 async function extractRowData(llmConfig, headers, tableName, userDescription) {
-  const systemPrompt = buildSystemPrompt(headers, tableName);
-
-  const raw = await chatJSON(llmConfig, systemPrompt, userDescription);
-
+  const t0 = Date.now();
+  let method = 'none';
+  let raw = null;
+  let llmError = null;
+  const llmAvailable = (llmConfig.apiKey && llmConfig.apiKey.trim()) || llmConfig.provider === 'ollama';
+  if (llmAvailable) {
+    try {
+      const systemPrompt = buildSystemPrompt(headers, tableName);
+      raw = await chatJSON(llmConfig, systemPrompt, userDescription);
+      method = 'llm';
+    } catch (err) {
+      llmError = err.message;
+    }
+  } else {
+    llmError = 'LLM API Key 未配置';
+  }
+  if (!raw) {
+    raw = ruleBasedExtract(headers, userDescription);
+    method = 'rule';
+  }
   const values = headers.map(h => {
     const v = raw[h];
     if (v === undefined || v === null) return '';
     return String(v);
   });
-
   const missing = headers.filter(h => !raw[h] || String(raw[h]).trim() === '');
-
-  return { values, missing, raw };
+  const parseTime = Date.now() - t0;
+  const nonEmptyCount = values.filter(v => v && v.trim()).length;
+  return { values, missing, raw, method, parseTime, llmError, nonEmptyCount };
 }
 
 function buildPreviewText(headers, values) {
@@ -47,4 +148,4 @@ function buildPreviewText(headers, values) {
   return lines.join('\n');
 }
 
-module.exports = { extractRowData, buildPreviewText, buildSystemPrompt };
+module.exports = { extractRowData, buildPreviewText, buildSystemPrompt, ruleBasedExtract, cleanValue };
