@@ -17,6 +17,12 @@ const DEFAULT_CONFIG = {
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat'
   },
+  wangdian: {
+    sid: '',
+    key: '',
+    secret: '',
+    salt: ''
+  },
   cache: {
     ttl: 300000,
     autoRefreshInterval: 1800000
@@ -40,7 +46,13 @@ function loadConfig() {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
       const userConfig = JSON.parse(raw);
-      return deepMerge(DEFAULT_CONFIG, userConfig);
+      const cfg = deepMerge(DEFAULT_CONFIG, userConfig);
+      // 环境变量覆盖敏感信息
+      if (process.env.WDT_SID) cfg.wangdian.sid = process.env.WDT_SID;
+      if (process.env.WDT_KEY) cfg.wangdian.key = process.env.WDT_KEY;
+      if (process.env.WDT_SECRET) cfg.wangdian.secret = process.env.WDT_SECRET;
+      if (process.env.WDT_SALT) cfg.wangdian.salt = process.env.WDT_SALT;
+      return cfg;
     }
   } catch (err) {
     console.error('[config] 加载配置失败:', err.message);

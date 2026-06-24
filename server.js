@@ -7,10 +7,23 @@ const http = require('http');
 const path = require('path');
 const fs = require('fs');
 
+// 简易 .env 加载器
+(function loadEnv() {
+  const envPath = path.join(__dirname, '.env');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf-8').split('\n');
+    for (const line of lines) {
+      const m = line.match(/^\s*([A-Z_]+)\s*=\s*(.+?)\s*$/);
+      if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
+    }
+  }
+})();
+
 const { loadConfig, saveConfig, getDocumentById, getDefaultDocument, validateConfig } = require('./src/config');
 const tencentDocs = require('./src/tencent-docs');
 const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
+const wangdian = require('./src/wangdian');
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
@@ -186,6 +199,27 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // --- 旺店通ERP查询 ---
+  if (url.pathname === '/api/wdt/query' && req.method === 'GET') {
+    const q = url.searchParams.get('q') || '';
+    if (!q.trim()) {
+      sendJSON(res, 400, { success: false, error: '查询内容不能为空' });
+      return;
+    }
+    const wdtCfg = config.wangdian || {};
+    if (!wdtCfg.sid || !wdtCfg.key || !wdtCfg.secret || !wdtCfg.salt) {
+      sendJSON(res, 400, { success: false, error: '旺店通API未配置，请在环境变量或配置文件中设置WDT_SID/WDT_KEY/WDT_SECRET/WDT_SALT' });
+      return;
+    }
+    try {
+      const result = await wangdian.queryOrder(wdtCfg, q);
+      sendJSON(res, 200, result);
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
   // --- 写入：获取表头 ---
   if (url.pathname === '/api/write/headers' && req.method === 'GET') {
     const docId = url.searchParams.get('docId') || config.defaultDocumentId;
@@ -292,6 +326,48 @@ async function handleRequest(req, res) {
       const headers = tencentDocs.parseCsvLine(lines[0]);
 
       const extractResult = await extractRowData(config.llm, headers, target.name, description);
+      
+      // 旺店通自动匹配：从描述中提取物流单号，查询ERP获取订单信息
+      let wdtMatch = null;
+      const wdtCfg = config.wangdian || {};
+      if (wdtCfg.sid && wdtCfg.key && wdtCfg.secret && wdtCfg.salt) {
+        // 从描述中提取可能的物流单号（纯数字或字母+数字，长度>=8）
+        const tokens = description.split(/\s+/);
+        for (const token of tokens) {
+          const cleaned = token.replace(/^[^\w]+/, '').replace(/[^\w]+$/, '');
+          if (/^[A-Za-z0-9]{8,}$/.test(cleaned) && /\d/.test(cleaned)) {
+            try {
+              const wdtResult = await wangdian.queryOrder(wdtCfg, cleaned);
+              if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
+                wdtMatch = wdtResult.orders[0];
+                break;
+              }
+            } catch (e) { /* 忽略旺店通查询错误 */ }
+          }
+        }
+      }
+      
+      // 合并旺店通数据到提取结果
+      if (wdtMatch) {
+        const wdtFields = {
+          '订单号': wdtMatch.src_tids,
+          '原始单号': wdtMatch.src_tids,
+          '快递单号': wdtMatch.logistics_no,
+          '物流单号': wdtMatch.logistics_no,
+          '店铺名称': wdtMatch.parsedShopName,
+          '店铺': wdtMatch.parsedShopName,
+          '平台': wdtMatch.platform
+        };
+        for (let i = 0; i < headers.length; i++) {
+          const h = headers[i];
+          if (wdtFields[h] && (!extractResult.values[i] || !extractResult.values[i].trim())) {
+            extractResult.values[i] = wdtFields[h];
+          }
+        }
+        extractResult.nonEmptyCount = extractResult.values.filter(v => v && v.trim()).length;
+        extractResult.missing = headers.filter((h, i) => !extractResult.values[i] || !extractResult.values[i].trim());
+      }
+      
       if (extractResult.nonEmptyCount === 0) {
         sendJSON(res, 400, { success: false, error: '未能从描述中提取到任何有效数据，请检查输入内容' });
         return;
@@ -325,7 +401,8 @@ async function handleRequest(req, res) {
             llmError: extractResult.llmError,
             nonEmptyCount: extractResult.nonEmptyCount,
             headerCount: headers.length,
-            totalLines: lines.length
+            totalLines: lines.length,
+            wdtMatch: wdtMatch ? { src_tids: wdtMatch.src_tids, logistics_no: wdtMatch.logistics_no, shop_name: wdtMatch.shop_name, platform: wdtMatch.platform } : null
           }
         }
       });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>综合电商售后处理系统</title>
+  <title>和旭电商售后小工具</title>
   <script>(function(){var t=localStorage.getItem('theme')||'dark';document.documentElement.setAttribute('data-theme',t);})();</script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -571,7 +571,7 @@
   <div class="app">
     <header class="header">
       <div class="header-top">
-        <span class="header-tag">v2.0.1</span>
+        <span class="header-tag">v2.1.0</span>
         <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="切换主题" style="margin-left:auto;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:14px;color:var(--text-secondary);transition:all 0.2s;">🌙</button>
       </div>
       <h1>综合电商售后处理系统</h1>
@@ -594,9 +594,10 @@
         <div class="search-row">
           <div class="search-input-wrap">
             <span class="search-prefix">&gt;</span>
-            <input type="text" class="search-input" id="searchInput" placeholder="输入快递单号..." autocomplete="off" spellcheck="false"/>
+            <input type="text" class="search-input" id="searchInput" placeholder="输入快递单号查询登记记录..." autocomplete="off" spellcheck="false"/>
           </div>
           <button class="btn btn-primary" id="searchBtn" onclick="doSearch()">查询</button>
+          <button class="btn btn-secondary" id="wdtSearchBtn" onclick="doWdtSearch()">ERP反查</button>
         </div>
         <div class="search-meta">
           <span id="statusText">ready</span>
@@ -627,6 +628,24 @@
           </table>
         </div>
       </div>
+
+      <div class="card" id="wdtResultPanel" style="display:none">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h2 class="card-title" style="margin:0">ERP订单信息</h2>
+          <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-secondary)">旺店通 · 共 <em id="wdtTotalCount" style="font-style:normal;color:var(--accent);font-weight:600">0</em> 条</span>
+        </div>
+        <div class="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>原始单号</th><th>物流单号</th><th>店铺名称</th><th>平台</th>
+                <th>物流公司</th><th>订单状态</th><th>收件地区</th>
+              </tr>
+            </thead>
+            <tbody id="wdtResultBody"></tbody>
+          </table>
+        </div>
+      </div>
     </section>
 
     <!-- Write View -->
@@ -645,7 +664,7 @@
         </div>
         <div class="form-group">
           <label>用自然语言描述要写入的内容</label>
-          <textarea id="writeDescription" placeholder="例如：华强北数码3C店 淘宝 订单号123456789 快递单号SF1234567890 丢件登记理赔货值399元 运费20元"></textarea>
+          <textarea id="writeDescription" placeholder="例如：9831745985570 丢件理赔54.9元 运费7元&#10;系统会自动识别物流单号并从旺店通ERP反查原始单号、店铺名、平台"></textarea>
         </div>
         <div class="btn-row">
           <button class="btn btn-primary" id="extractBtn" onclick="doExtract()">提取并预览</button>
@@ -1047,6 +1066,68 @@
       }
     }
 
+    const TRADE_STATUS_MAP = {4:'线下退款',5:'已取消',6:'待审核',10:'未付款',55:'已审核',95:'已发货',110:'已完成'};
+    function formatTradeStatus(s) { return TRADE_STATUS_MAP[s] || ('状态' + s); }
+
+    async function doWdtSearch() {
+      const q = $('searchInput').value.trim();
+      if (!q) { showError('请输入物流单号或原始单号'); $('searchInput').focus(); return; }
+
+      $('wdtResultPanel').style.display = 'none';
+      $('loading').classList.add('visible');
+      $('errorMsg').classList.remove('visible');
+      $('wdtSearchBtn').disabled = true;
+      setStatus('querying ERP...');
+
+      try {
+        const resp = await fetch('/api/wdt/query?q=' + encodeURIComponent(q));
+        const data = await resp.json();
+        $('loading').classList.remove('visible');
+
+        if (!data.success) {
+          showError(data.error || 'ERP查询失败');
+          showToast(data.error || 'ERP查询失败', 'error');
+          addLog('ERP反查', '失败', data.error || '查询失败');
+          setStatus('error');
+          return;
+        }
+
+        $('wdtTotalCount').textContent = data.total;
+        const body = $('wdtResultBody');
+        body.innerHTML = '';
+
+        if (data.total === 0) {
+          body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:var(--text-muted)">未找到匹配的ERP订单</td></tr>';
+        } else {
+          data.orders.forEach(o => {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td style="font-family:var(--font-mono);font-size:13px;color:var(--text-primary)">' + esc(o.src_tids) + '</td>' +
+              '<td style="font-family:var(--font-mono);font-size:13px;color:var(--accent)">' + hl(o.logistics_no, q) + '</td>' +
+              '<td>' + esc(o.parsedShopName || o.shop_name) + '</td>' +
+              '<td><span class="tag">' + esc(o.platform) + '</span></td>' +
+              '<td>' + esc(o.logistics_name) + '</td>' +
+              '<td>' + esc(formatTradeStatus(o.trade_status)) + '</td>' +
+              '<td>' + esc(o.receiver_area) + '</td>';
+            body.appendChild(tr);
+          });
+        }
+
+        $('wdtResultPanel').style.display = 'block';
+        setStatus('ERP — ' + data.total + ' result' + (data.total > 1 ? 's' : ''));
+        showToast('ERP查询完成，共 ' + data.total + ' 条结果', 'success');
+        addLog('ERP反查', '成功', '查询: ' + q + '，共 ' + data.total + ' 条');
+      } catch (err) {
+        $('loading').classList.remove('visible');
+        showError('网络请求失败');
+        showToast('网络请求失败', 'error');
+        addLog('ERP反查', '失败', '网络错误');
+        setStatus('network error');
+      } finally {
+        $('wdtSearchBtn').disabled = false;
+      }
+    }
+
     async function doExtract() {
       const docId = $('writeDocSelect').value;
       const targetId = $('writeTargetSelect').value;
@@ -1099,7 +1180,14 @@
         const d = data.data.debug;
         if (d) {
           $('debugInfo').style.display = 'block';
-          $('debugInfo').innerHTML = '识别方式: <span style="color:var(--accent)">' + esc(d.method) + '</span> | 耗时: ' + d.parseTime + 'ms | 非空字段: ' + d.nonEmptyCount + '/' + d.headerCount + (d.llmError ? ' | LLM错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>' : '');
+          let debugHtml = '识别方式: <span style="color:var(--accent)">' + esc(d.method) + '</span> | 耗时: ' + d.parseTime + 'ms | 非空字段: ' + d.nonEmptyCount + '/' + d.headerCount;
+          if (d.wdtMatch) {
+            debugHtml += '<br><span style="color:var(--accent)">旺店通匹配: 原始单号=' + esc(d.wdtMatch.src_tids || '') + ' 物流单号=' + esc(d.wdtMatch.logistics_no || '') + ' 店铺=' + esc(d.wdtMatch.shop_name || '') + ' 平台=' + esc(d.wdtMatch.platform || '') + '</span>';
+          }
+          if (d.llmError) {
+            debugHtml += ' | LLM错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>';
+          }
+          $('debugInfo').innerHTML = debugHtml;
         } else {
           $('debugInfo').style.display = 'none';
         }

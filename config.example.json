@@ -30,6 +30,12 @@
     "baseUrl": "https://api.deepseek.com",
     "model": "deepseek-chat"
   },
+  "wangdian": {
+    "sid": "",
+    "key": "",
+    "secret": "",
+    "salt": ""
+  },
   "cache": {
     "ttl": 300000,
     "autoRefreshInterval": 1800000
