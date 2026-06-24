@@ -19,7 +19,7 @@ const fs = require('fs');
   }
 })();
 
-const { loadConfig, saveConfig, getDocumentById, validateConfig } = require('./src/config');
+const { loadConfig, saveConfig, getDocumentById, getWriteDefaultDocument, validateConfig } = require('./src/config');
 const tencentDocs = require('./src/tencent-docs');
 const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
@@ -117,7 +117,8 @@ async function handleRequest(req, res) {
     try {
       const newConfig = { ...config };
       newConfig.documents = body.documents || config.documents;
-      newConfig.defaultDocumentId = body.defaultDocumentId || config.defaultDocumentId;
+      newConfig.queryDefaultDocumentId = body.queryDefaultDocumentId || config.queryDefaultDocumentId;
+      newConfig.writeDefaultDocumentId = body.writeDefaultDocumentId || config.writeDefaultDocumentId;
       newConfig.cache = body.cache || config.cache;
 
       if (body.tencentDocs) {
@@ -143,6 +144,10 @@ async function handleRequest(req, res) {
       for (const doc of config.documents) {
         tencentDocs.clearCache(doc.fileId);
       }
+      // 清理旧字段，避免混淆
+      if ('defaultDocumentId' in newConfig) {
+        delete newConfig.defaultDocumentId;
+      }
       sendJSON(res, 200, { success: true, message: '配置已保存' });
     } catch (err) {
       sendJSON(res, 500, { success: false, error: err.message });
@@ -155,7 +160,8 @@ async function handleRequest(req, res) {
     const docs = config.documents.map(d => ({
       id: d.id,
       name: d.name,
-      isDefault: d.id === config.defaultDocumentId,
+      queryDefault: d.id === config.queryDefaultDocumentId,
+      writeDefault: d.id === config.writeDefaultDocumentId,
       writeTargetCount: (d.writeTargets || []).length
     }));
     sendJSON(res, 200, { success: true, data: docs });
@@ -165,7 +171,7 @@ async function handleRequest(req, res) {
   // --- 查询 API（支持多文档） ---
   if (url.pathname === '/api/search' && req.method === 'GET') {
     const query = url.searchParams.get('q') || '';
-    const docId = url.searchParams.get('docId') || config.defaultDocumentId;
+    const docId = url.searchParams.get('docId') || config.queryDefaultDocumentId;
 
     const doc = getDocumentById(config, docId);
     if (!doc) {
@@ -200,7 +206,7 @@ async function handleRequest(req, res) {
 
   // --- 刷新缓存 API ---
   if (url.pathname === '/api/refresh' && req.method === 'GET') {
-    const docId = url.searchParams.get('docId') || config.defaultDocumentId;
+    const docId = url.searchParams.get('docId') || config.queryDefaultDocumentId;
     const doc = getDocumentById(config, docId);
     if (!doc) {
       sendJSON(res, 400, { success: false, error: '未找到指定文档' });
@@ -245,10 +251,10 @@ async function handleRequest(req, res) {
 
   // --- 写入：获取表头 ---
   if (url.pathname === '/api/write/headers' && req.method === 'GET') {
-    const docId = url.searchParams.get('docId') || config.defaultDocumentId;
+    const docId = url.searchParams.get('docId') || config.writeDefaultDocumentId;
     const targetId = url.searchParams.get('targetId');
 
-    const doc = getDocumentById(config, docId);
+    const doc = getDocumentById(config, docId || config.writeDefaultDocumentId);
     if (!doc) {
       sendJSON(res, 400, { success: false, error: '未找到指定文档' });
       return;
@@ -307,7 +313,7 @@ async function handleRequest(req, res) {
     const body = await readBody(req);
     const { docId, targetId, description } = body;
 
-    const doc = getDocumentById(config, docId || config.defaultDocumentId);
+    const doc = getDocumentById(config, docId || config.writeDefaultDocumentId);
     if (!doc) {
       sendJSON(res, 400, { success: false, error: '未找到指定文档' });
       return;
@@ -415,7 +421,7 @@ async function handleRequest(req, res) {
     const body = await readBody(req);
     const { docId, targetFileId, sheetId, targetRow, values } = body;
 
-    const doc = getDocumentById(config, docId || config.defaultDocumentId);
+    const doc = getDocumentById(config, docId || config.writeDefaultDocumentId);
     if (!doc) {
       sendJSON(res, 400, { success: false, error: '未找到指定文档' });
       return;

@@ -19,7 +19,8 @@
       ]
     }
   ],
-  "defaultDocumentId": "doc1",
+  "queryDefaultDocumentId": "doc1",
+  "writeDefaultDocumentId": "doc1",
   "tencentDocs": {
     "apiKey": "YOUR_TENCENT_DOCS_API_KEY",
     "mcpUrl": "https://docs.qq.com/openapi/mcp"

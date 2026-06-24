@@ -6,7 +6,8 @@ const EXAMPLE_PATH = path.join(__dirname, '..', 'config.example.json');
 
 const DEFAULT_CONFIG = {
   documents: [],
-  defaultDocumentId: '',
+  queryDefaultDocumentId: '',
+  writeDefaultDocumentId: '',
   tencentDocs: {
     apiKey: '',
     mcpUrl: 'https://docs.qq.com/openapi/mcp'
@@ -46,6 +47,13 @@ function loadConfig() {
     if (fs.existsSync(CONFIG_PATH)) {
       const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
       const userConfig = JSON.parse(raw);
+
+      // 向后兼容：旧版 defaultDocumentId 拆分为查询/写入默认文档
+      if (userConfig.defaultDocumentId && !userConfig.queryDefaultDocumentId && !userConfig.writeDefaultDocumentId) {
+        userConfig.queryDefaultDocumentId = userConfig.defaultDocumentId;
+        userConfig.writeDefaultDocumentId = userConfig.defaultDocumentId;
+      }
+
       const cfg = deepMerge(DEFAULT_CONFIG, userConfig);
       // 环境变量覆盖敏感信息
       if (process.env.WDT_SID) cfg.wangdian.sid = process.env.WDT_SID;
@@ -71,8 +79,15 @@ function getDocumentById(config, docId) {
 }
 
 function getDefaultDocument(config) {
-  if (config.defaultDocumentId) {
-    return getDocumentById(config, config.defaultDocumentId);
+  if (config.queryDefaultDocumentId) {
+    return getDocumentById(config, config.queryDefaultDocumentId);
+  }
+  return config.documents[0] || null;
+}
+
+function getWriteDefaultDocument(config) {
+  if (config.writeDefaultDocumentId) {
+    return getDocumentById(config, config.writeDefaultDocumentId);
   }
   return config.documents[0] || null;
 }
@@ -92,4 +107,4 @@ function validateConfig(config) {
   return { valid: errors.length === 0, errors };
 }
 
-module.exports = { loadConfig, saveConfig, getDocumentById, getDefaultDocument, validateConfig, deepMerge, DEFAULT_CONFIG };
+module.exports = { loadConfig, saveConfig, getDocumentById, getDefaultDocument, getWriteDefaultDocument, validateConfig, deepMerge, DEFAULT_CONFIG };
