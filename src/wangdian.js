@@ -4,7 +4,8 @@
  */
 
 const crypto = require('crypto');
-const http = require('http');
+const https = require('https');
+const { PLATFORMS, TRADE_STATUS_MAP, WDT_FIELD_MAP, LOGISTICS_NO_REGEX } = require('./constants');
 
 const BASE_TIME = 1325347200; // 2012-01-01 00:00:00
 const API_HOST = 'wdt.wangdian.cn';
@@ -59,7 +60,7 @@ function callApi(credentials, method, bodyParams) {
 
     const options = {
       hostname: API_HOST,
-      port: 80,
+      port: 443,
       path: API_PATH + '?' + queryString,
       method: 'POST',
       headers: {
@@ -68,7 +69,7 @@ function callApi(credentials, method, bodyParams) {
       }
     };
 
-    const req = http.request(options, (res) => {
+    const req = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
@@ -97,14 +98,11 @@ function callApi(credentials, method, bodyParams) {
 function parseShopInfo(fullShopName) {
   if (!fullShopName) return { platform: '', shopName: '' };
   
-  // 常见平台关键词
-  const platforms = ['京东', '淘宝', '天猫', '拼多多', '抖音', '快手', '小红书', '微信', '有赞', '微店', '苏宁', '唯品会', '当当', '1688', '阿里'];
-  
   let platform = '';
   let shopName = fullShopName;
   
   // 尝试匹配平台
-  for (const p of platforms) {
+  for (const p of PLATFORMS) {
     if (fullShopName.startsWith(p) || fullShopName.includes(' ' + p) || fullShopName.includes(p + ' ')) {
       platform = p;
       break;
@@ -182,4 +180,49 @@ async function queryOrder(credentials, query) {
   return { success: true, total: parsedOrders.length, orders: parsedOrders };
 }
 
-module.exports = { queryOrder, callApi, calcSign, parseShopInfo };
+/**
+ * 格式化旺店通订单状态码为可读文本
+ */
+function formatTradeStatus(status) {
+  return TRADE_STATUS_MAP[status] || ('状态' + status);
+}
+
+/**
+ * 从描述文本中自动匹配旺店通订单
+ * 遍历描述中的每个 token，提取可能的物流单号并查询旺店通，
+ * 返回第一个匹配到的订单对象（或 null）。
+ */
+async function autoMatchWdtOrder(credentials, description) {
+  const tokens = description.split(/\s+/);
+  for (const token of tokens) {
+    const cleaned = token.replace(/^[^\w]+/, '').replace(/[^\w]+$/, '');
+    if (LOGISTICS_NO_REGEX.test(cleaned) && /\d/.test(cleaned)) {
+      try {
+        const wdtResult = await queryOrder(credentials, cleaned);
+        if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
+          return wdtResult.orders[0];
+        }
+      } catch (e) { /* 忽略旺店通查询错误 */ }
+    }
+  }
+  return null;
+}
+
+/**
+ * 将旺店通订单数据合并到提取结果中
+ * 仅填充当前为空的字段，不覆盖已有值。
+ * 返回更新后的 nonEmptyCount 和 missing。
+ */
+function mergeWdtData(headers, extractResult, wdtMatch) {
+  for (let i = 0; i < headers.length; i++) {
+    const h = headers[i];
+    const wdtProp = WDT_FIELD_MAP[h];
+    if (wdtProp && wdtMatch[wdtProp] && (!extractResult.values[i] || !extractResult.values[i].trim())) {
+      extractResult.values[i] = wdtMatch[wdtProp];
+    }
+  }
+  extractResult.nonEmptyCount = extractResult.values.filter(v => v && v.trim()).length;
+  extractResult.missing = headers.filter((h, i) => !extractResult.values[i] || !extractResult.values[i].trim());
+}
+
+module.exports = { queryOrder, callApi, calcSign, parseShopInfo, formatTradeStatus, autoMatchWdtOrder, mergeWdtData };

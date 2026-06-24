@@ -57,7 +57,8 @@ function loadConfig() {
   } catch (err) {
     console.error('[config] 加载配置失败:', err.message);
   }
-  return { ...DEFAULT_CONFIG };
+  // 使用深拷贝避免修改 DEFAULT_CONFIG 的嵌套对象
+  return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 }
 
 function saveConfig(config) {

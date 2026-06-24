@@ -19,16 +19,34 @@ const fs = require('fs');
   }
 })();
 
-const { loadConfig, saveConfig, getDocumentById, getDefaultDocument, validateConfig } = require('./src/config');
+const { loadConfig, saveConfig, getDocumentById, validateConfig } = require('./src/config');
 const tencentDocs = require('./src/tencent-docs');
 const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
 const wangdian = require('./src/wangdian');
+const { autoMatchWdtOrder, mergeWdtData } = wangdian;
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 请求体大小上限：10MB，防止 DoS
+const MAX_DESCRIPTION_LENGTH = 5000; // LLM 提取描述的最大字符数
+const HEADER_SAMPLE_ROW_LIMIT = 50; // 读取表头采样时的最大行数
 
 let config = loadConfig();
+
+// 缓存 HTML 文件到内存，避免每次请求都读磁盘
+let htmlCache = null;
+function getIndexHtml() {
+  if (!htmlCache) {
+    htmlCache = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf-8');
+  }
+  return htmlCache;
+}
+
+function maskApiKey(key) {
+  if (!key) return key;
+  return key.substring(0, 4) + '****' + key.substring(key.length - 4);
+}
 
 function sendJSON(res, statusCode, data) {
   res.writeHead(statusCode, {
@@ -43,15 +61,26 @@ function sendJSON(res, statusCode, data) {
 function readBody(req) {
   return new Promise((resolve) => {
     let body = '';
-    req.on('data', chunk => body += chunk);
+    let tooLarge = false;
+    req.on('data', chunk => {
+      if (tooLarge) return;
+      body += chunk;
+      if (body.length > MAX_BODY_SIZE) {
+        tooLarge = true;
+        resolve({});
+      }
+    });
     req.on('end', () => {
+      if (tooLarge) return;
       try { resolve(JSON.parse(body)); }
       catch { resolve({}); }
     });
+    req.on('error', () => resolve({}));
   });
 }
 
 async function handleRequest(req, res) {
+  try {
   if (req.method === 'OPTIONS') {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
@@ -67,7 +96,7 @@ async function handleRequest(req, res) {
   // --- 静态文件 ---
   if (url.pathname === '/' || url.pathname === '/index.html') {
     try {
-      const html = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf-8');
+      const html = getIndexHtml();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(html);
     } catch { res.writeHead(404); res.end('Not Found'); }
@@ -77,14 +106,8 @@ async function handleRequest(req, res) {
   // --- 配置 API ---
   if (url.pathname === '/api/config' && req.method === 'GET') {
     const safeConfig = JSON.parse(JSON.stringify(config));
-    if (safeConfig.tencentDocs.apiKey) {
-      const k = safeConfig.tencentDocs.apiKey;
-      safeConfig.tencentDocs.apiKey = k.substring(0, 4) + '****' + k.substring(k.length - 4);
-    }
-    if (safeConfig.llm.apiKey) {
-      const k = safeConfig.llm.apiKey;
-      safeConfig.llm.apiKey = k.substring(0, 4) + '****' + k.substring(k.length - 4);
-    }
+    safeConfig.tencentDocs.apiKey = maskApiKey(safeConfig.tencentDocs.apiKey);
+    safeConfig.llm.apiKey = maskApiKey(safeConfig.llm.apiKey);
     sendJSON(res, 200, { success: true, data: safeConfig });
     return;
   }
@@ -251,7 +274,7 @@ async function handleRequest(req, res) {
 
       const csv = await tencentDocs.readSheetCsv(
         config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
-        targetFileId, sheet.sheet_id, Math.min(sheet.row_count, 50), sheet.col_count
+        targetFileId, sheet.sheet_id, Math.min(sheet.row_count, HEADER_SAMPLE_ROW_LIMIT), sheet.col_count
       );
 
       const lines = csv.split('\n').filter(l => l.trim());
@@ -300,6 +323,10 @@ async function handleRequest(req, res) {
       sendJSON(res, 400, { success: false, error: '请输入描述内容' });
       return;
     }
+    if (description.length > MAX_DESCRIPTION_LENGTH) {
+      sendJSON(res, 400, { success: false, error: `描述内容过长，最大支持 ${MAX_DESCRIPTION_LENGTH} 个字符` });
+      return;
+    }
 
     try {
       const targetFileId = target.fileId || doc.fileId;
@@ -315,7 +342,7 @@ async function handleRequest(req, res) {
 
       const csv = await tencentDocs.readSheetCsv(
         config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
-        targetFileId, sheet.sheet_id, Math.min(sheet.row_count, 50), sheet.col_count
+        targetFileId, sheet.sheet_id, Math.min(sheet.row_count, HEADER_SAMPLE_ROW_LIMIT), sheet.col_count
       );
 
       const lines = csv.split('\n').filter(l => l.trim());
@@ -325,47 +352,18 @@ async function handleRequest(req, res) {
       }
       const headers = tencentDocs.parseCsvLine(lines[0]);
 
-      const extractResult = await extractRowData(config.llm, headers, target.name, description);
-      
-      // 旺店通自动匹配：从描述中提取物流单号，查询ERP获取订单信息
-      let wdtMatch = null;
+      // 并行执行：LLM 提取 + 旺店通自动匹配（两者互不依赖）
       const wdtCfg = config.wangdian || {};
-      if (wdtCfg.sid && wdtCfg.key && wdtCfg.secret && wdtCfg.salt) {
-        // 从描述中提取可能的物流单号（纯数字或字母+数字，长度>=8）
-        const tokens = description.split(/\s+/);
-        for (const token of tokens) {
-          const cleaned = token.replace(/^[^\w]+/, '').replace(/[^\w]+$/, '');
-          if (/^[A-Za-z0-9]{8,}$/.test(cleaned) && /\d/.test(cleaned)) {
-            try {
-              const wdtResult = await wangdian.queryOrder(wdtCfg, cleaned);
-              if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
-                wdtMatch = wdtResult.orders[0];
-                break;
-              }
-            } catch (e) { /* 忽略旺店通查询错误 */ }
-          }
-        }
-      }
+      const wdtEnabled = wdtCfg.sid && wdtCfg.key && wdtCfg.secret && wdtCfg.salt;
+
+      const [extractResult, wdtMatch] = await Promise.all([
+        extractRowData(config.llm, headers, target.name, description),
+        wdtEnabled ? autoMatchWdtOrder(wdtCfg, description) : Promise.resolve(null)
+      ]);
       
       // 合并旺店通数据到提取结果
       if (wdtMatch) {
-        const wdtFields = {
-          '订单号': wdtMatch.src_tids,
-          '原始单号': wdtMatch.src_tids,
-          '快递单号': wdtMatch.logistics_no,
-          '物流单号': wdtMatch.logistics_no,
-          '店铺名称': wdtMatch.parsedShopName,
-          '店铺': wdtMatch.parsedShopName,
-          '平台': wdtMatch.platform
-        };
-        for (let i = 0; i < headers.length; i++) {
-          const h = headers[i];
-          if (wdtFields[h] && (!extractResult.values[i] || !extractResult.values[i].trim())) {
-            extractResult.values[i] = wdtFields[h];
-          }
-        }
-        extractResult.nonEmptyCount = extractResult.values.filter(v => v && v.trim()).length;
-        extractResult.missing = headers.filter((h, i) => !extractResult.values[i] || !extractResult.values[i].trim());
+        mergeWdtData(headers, extractResult, wdtMatch);
       }
       
       if (extractResult.nonEmptyCount === 0) {
@@ -425,6 +423,10 @@ async function handleRequest(req, res) {
 
     if (!values || !Array.isArray(values)) {
       sendJSON(res, 400, { success: false, error: '写入数据无效' });
+      return;
+    }
+    if (!Number.isInteger(targetRow) || targetRow < 0) {
+      sendJSON(res, 400, { success: false, error: '目标行号无效' });
       return;
     }
 
@@ -491,6 +493,13 @@ async function handleRequest(req, res) {
 
   res.writeHead(404);
   res.end('Not Found');
+  } catch (err) {
+    if (!res.headersSent) {
+      sendJSON(res, 500, { success: false, error: '服务器内部错误: ' + err.message });
+    } else {
+      console.error('[server] 未捕获的错误:', err);
+    }
+  }
 }
 
 const server = http.createServer(handleRequest);
@@ -525,15 +534,21 @@ server.listen(PORT, HOST, async () => {
 
   if (config.cache.autoRefreshInterval > 0) {
     setInterval(async () => {
-      for (const doc of config.documents) {
-        try {
+      // 并行刷新所有文档，减少刷新总耗时
+      const results = await Promise.allSettled(
+        config.documents.map(doc => {
           tencentDocs.clearCache(doc.fileId);
-          const records = await tencentDocs.fetchData(doc, config.tencentDocs, config.cache.ttl);
-          console.log(`[自动刷新] ${doc.name} — ${records.length} 条记录`);
-        } catch (err) {
-          console.error(`[自动刷新] ${doc.name} 失败: ${err.message}`);
+          return tencentDocs.fetchData(doc, config.tencentDocs, config.cache.ttl)
+            .then(records => ({ name: doc.name, count: records.length }));
+        })
+      );
+      results.forEach(r => {
+        if (r.status === 'fulfilled') {
+          console.log(`[自动刷新] ${r.value.name} — ${r.value.count} 条记录`);
+        } else {
+          console.error(`[自动刷新] 失败: ${r.reason.message}`);
         }
-      }
+      });
     }, config.cache.autoRefreshInterval);
   }
 });

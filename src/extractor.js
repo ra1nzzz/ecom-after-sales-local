@@ -1,4 +1,5 @@
 const { chatJSON } = require('./llm');
+const { FIELD_ALIASES, CLAIM_TYPES } = require('./constants');
 
 function buildSystemPrompt(headers, tableName) {
   return '你是一个电商售后数据录入助手。\n' +
@@ -69,14 +70,10 @@ function ruleBasedExtract(headers, description) {
   // 按长度降序排列（包括去后缀的版本）
   const sortedHeaders = Object.keys(headerMap).sort((a, b) => b.length - a.length);
   
-  const aliases = {
-    '单号': '快递单号', '金额': '货值(元)', '价格': '货值(元)',
-    '日期': '登记日期', '数量': '正品数量',
-    '理赔': '理赔类型', '运费': '运费(元)', '货值': '货值(元)'
-  };
+  const aliases = FIELD_ALIASES;
   
   // 理赔类型关键词
-  const claimTypes = ['丢件', '破损', '少件', '漏发', '错发', '退件', '拒收', '地址错误', '超区', '无人收件'];
+  const claimTypes = CLAIM_TYPES;
   
   const tokens = description.split(/\s+/).filter(t => t.length > 0);
   let currentHeader = null;
@@ -191,14 +188,19 @@ async function extractRowData(llmConfig, headers, tableName, userDescription) {
     raw = ruleBasedExtract(headers, userDescription);
     method = 'rule';
   } else {
-    // LLM返回结果后，用rule-based补充空字段
-    const ruleResult = ruleBasedExtract(headers, userDescription);
-    for (const h of headers) {
-      if ((!raw[h] || String(raw[h]).trim() === '') && ruleResult[h] && String(ruleResult[h]).trim()) {
-        raw[h] = ruleResult[h];
+    // LLM返回结果后，仅当存在空字段时才用rule-based补充，避免不必要的计算
+    const hasEmpty = headers.some(h => !raw[h] || String(raw[h]).trim() === '');
+    if (hasEmpty) {
+      const ruleResult = ruleBasedExtract(headers, userDescription);
+      for (const h of headers) {
+        if ((!raw[h] || String(raw[h]).trim() === '') && ruleResult[h] && String(ruleResult[h]).trim()) {
+          raw[h] = ruleResult[h];
+        }
       }
+      method = 'llm+rule';
+    } else {
+      method = 'llm';
     }
-    method = 'llm+rule';
   }
   const values = headers.map(h => {
     const v = raw[h];

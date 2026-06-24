@@ -1,5 +1,8 @@
 const https = require('https');
 
+// 读取单元格数据时限制的最大列数，防止请求过大
+const MAX_COL_COUNT = 10;
+
 const docStates = new Map();
 
 function getDocState(fileId) {
@@ -45,6 +48,10 @@ function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error(`MCP API 返回错误状态码 ${res.statusCode}: ${data.substring(0, 200)}`));
+          return;
+        }
         try {
           const parsed = JSON.parse(data);
           if (parsed.error) {
@@ -73,7 +80,8 @@ function sendMcpNotification(mcpUrl, apiKey, method, params, sessionId) {
     headers: { 'Content-Type': 'application/json', 'Authorization': apiKey, 'Content-Length': Buffer.byteLength(body) }
   };
   if (sessionId) options.headers['Mcp-Session-Id'] = sessionId;
-  const req = https.request(options, () => {});
+  // 通知类消息无需等待响应，但仍需消费响应体以避免 socket 泄漏
+  const req = https.request(options, (res) => { res.resume(); });
   req.on('error', () => {});
   req.write(body);
   req.end();
@@ -121,7 +129,7 @@ async function getSheetList(mcpUrl, apiKey, state, fileId) {
   try {
     const parsed = JSON.parse(text);
     if (parsed.sheets) return parsed.sheets;
-  } catch (e) {}
+  } catch (e) { /* 响应非JSON格式，返回空数组 */ }
   return [];
 }
 
@@ -132,7 +140,7 @@ async function readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, rowCount, co
     start_row: 0,
     end_row: rowCount,
     start_col: 0,
-    end_col: Math.min(colCount, 10),
+    end_col: Math.min(colCount, MAX_COL_COUNT),
     return_csv: true
   });
   state.mcpSessionId = sessionId;
@@ -228,18 +236,22 @@ async function fetchData(docConfig, tencentDocsConfig, cacheTTL) {
     const sheets = await getSheetList(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state, docConfig.fileId);
 
     const keywords = docConfig.readSheetKeywords || ['客退', '退货'];
+    const dataSheets = sheets.filter(sheet => keywords.some(kw => sheet.sheet_name.includes(kw)));
+
+    // 并行读取所有匹配的 sheet，提升多表文档的加载速度
+    const results = await Promise.allSettled(
+      dataSheets.map(sheet =>
+        readSheetCsv(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state, docConfig.fileId, sheet.sheet_id, sheet.row_count, sheet.col_count)
+          .then(csv => parseSheetCsv(csv, sheet.sheet_name))
+      )
+    );
+
     const allRecords = [];
-
-    for (const sheet of sheets) {
-      const isDataSheet = keywords.some(kw => sheet.sheet_name.includes(kw));
-      if (!isDataSheet) continue;
-
-      try {
-        const csv = await readSheetCsv(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state, docConfig.fileId, sheet.sheet_id, sheet.row_count, sheet.col_count);
-        const records = parseSheetCsv(csv, sheet.sheet_name);
-        allRecords.push(...records);
-      } catch (err) {
-        console.error(`    读取失败 [${sheet.sheet_name}]: ${err.message}`);
+    for (let i = 0; i < results.length; i++) {
+      if (results[i].status === 'fulfilled') {
+        allRecords.push(...results[i].value);
+      } else {
+        console.error(`    读取失败 [${dataSheets[i].sheet_name}]: ${results[i].reason.message}`);
       }
     }
 

@@ -45,7 +45,11 @@ async function chatJSON(llmConfig, systemPrompt, userMessage) {
   } catch (e) {
     const match = content.match(/\{[\s\S]*\}/);
     if (match) {
-      parsed = JSON.parse(match[0]);
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch (e2) {
+        throw new Error('LLM 输出无法解析为 JSON: ' + content.substring(0, 200));
+      }
     } else {
       throw new Error('LLM 输出无法解析为 JSON: ' + content.substring(0, 200));
     }
