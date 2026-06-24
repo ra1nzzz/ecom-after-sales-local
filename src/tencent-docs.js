@@ -283,10 +283,12 @@ async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
   const state = getDocState(fileId);
   await initMcp(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state);
 
-  const MCP_ROW_OFFSET = 1;
+  // 腾讯文档 sheet.set_range_value 接口中：
+  // - row 为 1-based（从 1 开始）
+  // - col 为 0-based（从 0 开始）
   const cellValues = values.map((val, idx) => ({
-    row: startRow + MCP_ROW_OFFSET,
-    col: idx + MCP_ROW_OFFSET,
+    row: startRow + 1,
+    col: idx,
     value_type: 'STRING',
     string_value: String(val)
   }));
