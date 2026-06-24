@@ -133,11 +133,11 @@ async function getSheetList(mcpUrl, apiKey, state, fileId) {
   return [];
 }
 
-async function readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, rowCount, colCount) {
+async function readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, rowCount, colCount, startRow = 0) {
   const { result, sessionId } = await callTool(mcpUrl, apiKey, state.mcpSessionId, 'sheet.get_cell_data', {
     file_id: fileId,
     sheet_id: sheetId,
-    start_row: 0,
+    start_row: Math.max(0, startRow),
     end_row: rowCount,
     start_col: 0,
     end_col: Math.min(colCount, MAX_COL_COUNT),

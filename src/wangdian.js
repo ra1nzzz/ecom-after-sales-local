@@ -210,16 +210,20 @@ async function autoMatchWdtOrder(credentials, description) {
 
 /**
  * 将旺店通订单数据合并到提取结果中
- * 仅填充当前为空的字段，不覆盖已有值。
+ * 旺店通数据来自真实订单，优先级高于 LLM/规则提取，因此会覆盖已有值。
  * 返回更新后的 nonEmptyCount 和 missing。
  */
 function mergeWdtData(headers, extractResult, wdtMatch) {
   for (let i = 0; i < headers.length; i++) {
     const h = headers[i];
     const wdtProp = WDT_FIELD_MAP[h];
-    if (wdtProp && wdtMatch[wdtProp] && (!extractResult.values[i] || !extractResult.values[i].trim())) {
+    if (wdtProp && wdtMatch[wdtProp] && String(wdtMatch[wdtProp]).trim()) {
       extractResult.values[i] = wdtMatch[wdtProp];
     }
+  }
+  // 同步 raw，确保预览和后续处理一致
+  for (let i = 0; i < headers.length; i++) {
+    extractResult.raw[headers[i]] = extractResult.values[i];
   }
   extractResult.nonEmptyCount = extractResult.values.filter(v => v && v.trim()).length;
   extractResult.missing = headers.filter((h, i) => !extractResult.values[i] || !extractResult.values[i].trim());

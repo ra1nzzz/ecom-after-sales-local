@@ -34,6 +34,26 @@ const HEADER_SAMPLE_ROW_LIMIT = 50; // 读取表头采样时的最大行数
 
 let config = loadConfig();
 
+const EMPTY_ROW_BATCH_SIZE = 50;
+
+// 从 startRow 开始查找第一个全空行，用于追加写入
+async function findNextEmptyRow(mcpUrl, apiKey, state, fileId, sheetId, startRow, colCount, maxRowCount) {
+  let currentRow = startRow;
+  while (currentRow < maxRowCount) {
+    const endRow = Math.min(currentRow + EMPTY_ROW_BATCH_SIZE, maxRowCount);
+    const csv = await tencentDocs.readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, endRow, colCount, currentRow);
+    const lines = csv.split('\n').filter(l => l.trim());
+    for (let i = 0; i < lines.length; i++) {
+      const cells = tencentDocs.parseCsvLine(lines[i]);
+      if (cells.every(c => !c || !c.trim())) {
+        return currentRow + i;
+      }
+    }
+    currentRow += EMPTY_ROW_BATCH_SIZE;
+  }
+  return maxRowCount;
+}
+
 // 缓存 HTML 文件到内存，避免每次请求都读磁盘
 let htmlCache = null;
 function getIndexHtml() {
@@ -453,30 +473,22 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const checkCsv = await tencentDocs.readSheetCsv(
+      // 执行写入前重新查找第一个空行，确保追加到已有内容的下一行
+      const actualRow = await findNextEmptyRow(
         config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
-        writeDocId, sheetId, targetRow + 1, sheet.col_count
+        writeDocId, sheetId, targetRow, sheet.col_count, sheet.row_count
       );
-      const checkLines = checkCsv.split('\n').filter(l => l.trim());
-      if (checkLines.length > targetRow) {
-        const rowCells = tencentDocs.parseCsvLine(checkLines[targetRow] || '');
-        const hasData = rowCells.some(c => c && c.trim());
-        if (hasData) {
-          sendJSON(res, 409, { success: false, error: '目标行已有数据，可能正在被其他人使用，请重新提取' });
-          return;
-        }
-      }
 
       const result = await tencentDocs.writeRow(
-        config.tencentDocs, writeDocId, sheetId, targetRow, values
+        config.tencentDocs, writeDocId, sheetId, actualRow, values
       );
 
       tencentDocs.clearCache(writeDocId);
 
       sendJSON(res, 200, {
         success: true,
-        message: `写入成功，更新了 ${result.updateNum} 个单元格`,
-        data: { updateNum: result.updateNum, row: targetRow }
+        message: `登记成功，更新了 ${result.updateNum} 个单元格`,
+        data: { updateNum: result.updateNum, row: actualRow }
       });
     } catch (err) {
       sendJSON(res, 500, { success: false, error: err.message });

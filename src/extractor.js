@@ -202,6 +202,14 @@ async function extractRowData(llmConfig, headers, tableName, userDescription) {
       method = 'llm';
     }
   }
+  // 自动填充登记日期为当天日期（若表头包含且值为空）
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  const dateHeader = headers.find(h => h === '登记日期' || h.includes('日期'));
+  if (dateHeader && (!raw[dateHeader] || String(raw[dateHeader]).trim() === '')) {
+    raw[dateHeader] = todayStr;
+  }
+
   const values = headers.map(h => {
     const v = raw[h];
     if (v === undefined || v === null) return '';
