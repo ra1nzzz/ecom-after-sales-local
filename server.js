@@ -309,6 +309,10 @@ async function handleRequest(req, res) {
         return;
       }
       const headers = tencentDocs.parseCsvLine(lines[0]);
+      // 去除标题行末尾连续的空列，避免写入时产生多余空列导致视觉错位
+      while (headers.length > 0 && !headers[headers.length - 1].trim()) {
+        headers.pop();
+      }
 
       sendJSON(res, 200, {
         success: true,
@@ -377,6 +381,10 @@ async function handleRequest(req, res) {
         return;
       }
       const headers = tencentDocs.parseCsvLine(lines[0]);
+      // 去除标题行末尾连续的空列，避免写入时产生多余空列导致视觉错位
+      while (headers.length > 0 && !headers[headers.length - 1].trim()) {
+        headers.pop();
+      }
 
       // 并行执行：LLM 提取 + 旺店通自动匹配（两者互不依赖）
       const wdtCfg = config.wangdian || {};
