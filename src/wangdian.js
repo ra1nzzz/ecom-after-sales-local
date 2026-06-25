@@ -169,6 +169,7 @@ async function queryOrder(credentials, query) {
       trade_time: o.trade_time || '',
       consign_time: o.consign_time || '',
       stockout_no: o.stockout_no || '',
+      warehouse_no: o.warehouse_no || '',
       goods_count: o.goods_count || 0,
       goods_amount: o.goods_amount || 0,
       receiver_area: o.receiver_area || '',
