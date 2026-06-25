@@ -420,6 +420,44 @@
       font-style: italic;
     }
 
+    .preview-table td.editable-cell {
+      position: relative;
+      cursor: pointer;
+      min-width: 90px;
+      transition: background 0.15s;
+    }
+
+    .preview-table td.editable-cell:hover {
+      background: var(--bg-hover);
+    }
+
+    .preview-table td.editable-cell .edit-icon {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      opacity: 0;
+      transition: opacity 0.15s;
+      fill: var(--text-secondary);
+      pointer-events: none;
+    }
+
+    .preview-table td.editable-cell:hover .edit-icon {
+      opacity: 1;
+    }
+
+    .preview-table td.editable-cell .cell-editor {
+      width: 100%;
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 14px;
+      background: var(--bg-card);
+      color: var(--text-primary);
+      outline: none;
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
     .missing-fields {
       background: var(--warning-bg);
       border: 1px solid rgba(251, 191, 36, 0.2);
@@ -1223,18 +1261,8 @@
         const values = data.data.values;
 
         $('previewHeader').innerHTML = headers.map(h => '<th>' + esc(h) + '</th>').join('');
-        $('previewRow').innerHTML = values.map(v => {
-          if (!v || !v.trim()) return '<td class="empty-cell">(空)</td>';
-          return '<td>' + esc(v) + '</td>';
-        }).join('');
-
-        if (data.data.missing && data.data.missing.length > 0) {
-          const el = $('missingFields');
-          el.style.display = 'block';
-          el.textContent = '⚠ 以下字段未填写，建议补充: ' + data.data.missing.join(', ');
-        } else {
-          $('missingFields').style.display = 'none';
-        }
+        renderPreviewRow();
+        updateMissingFields();
 
         const d = data.data.debug;
         if (d) {
@@ -1261,6 +1289,74 @@
         addLog('提取', '失败', '网络错误: ' + err.message);
       } finally {
         $('extractBtn').disabled = false;
+      }
+    }
+
+    function renderPreviewRow() {
+      if (!writePreviewData) return;
+      const values = writePreviewData.values;
+      const pencilIcon = '<svg class="edit-icon" viewBox="0 0 24 24" width="13" height="13"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+      $('previewRow').innerHTML = values.map((v, i) => {
+        const isEmpty = !v || !v.trim();
+        const display = isEmpty ? '(空)' : esc(v);
+        const cls = isEmpty ? 'empty-cell' : '';
+        return '<td class="editable-cell ' + cls + '" data-col="' + i + '" onclick="editPreviewCell(' + i + ')">' +
+          '<span class="cell-text">' + display + '</span>' + pencilIcon + '</td>';
+      }).join('');
+    }
+
+    function updateMissingFields() {
+      if (!writePreviewData) return;
+      const headers = writePreviewData.headers;
+      const values = writePreviewData.values;
+      const missing = headers.filter((h, i) => !values[i] || !values[i].trim());
+      const el = $('missingFields');
+      if (missing.length > 0) {
+        el.style.display = 'block';
+        el.textContent = '⚠ 以下字段未填写，建议补充: ' + missing.join(', ');
+      } else {
+        el.style.display = 'none';
+      }
+    }
+
+    function editPreviewCell(colIndex) {
+      if (!writePreviewData) return;
+      const td = document.querySelector('#previewRow td[data-col="' + colIndex + '"]');
+      if (!td || td.querySelector('input')) return;
+      const currentValue = writePreviewData.values[colIndex] || '';
+      td.innerHTML = '<input type="text" class="cell-editor" value="' + esc(currentValue) + '" ' +
+        'onblur="savePreviewCell(' + colIndex + ', this.value)" ' +
+        'onkeydown="handlePreviewCellKey(event, ' + colIndex + ')" />';
+      const input = td.querySelector('input');
+      input.focus();
+      input.select();
+    }
+
+    function savePreviewCell(colIndex, value) {
+      if (!writePreviewData) return;
+      writePreviewData.values[colIndex] = value.trim();
+      renderPreviewCell(colIndex);
+      updateMissingFields();
+    }
+
+    function renderPreviewCell(colIndex) {
+      if (!writePreviewData) return;
+      const td = document.querySelector('#previewRow td[data-col="' + colIndex + '"]');
+      if (!td) return;
+      const v = writePreviewData.values[colIndex];
+      const isEmpty = !v || !v.trim();
+      const display = isEmpty ? '(空)' : esc(v);
+      const cls = isEmpty ? 'empty-cell' : '';
+      const pencilIcon = '<svg class="edit-icon" viewBox="0 0 24 24" width="13" height="13"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>';
+      td.className = 'editable-cell ' + cls;
+      td.innerHTML = '<span class="cell-text">' + display + '</span>' + pencilIcon;
+    }
+
+    function handlePreviewCellKey(e, colIndex) {
+      if (e.key === 'Enter') {
+        savePreviewCell(colIndex, e.target.value);
+      } else if (e.key === 'Escape') {
+        e.target.blur();
       }
     }
 

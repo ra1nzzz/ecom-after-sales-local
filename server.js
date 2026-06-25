@@ -42,9 +42,10 @@ async function findNextEmptyRow(mcpUrl, apiKey, state, fileId, sheetId, startRow
   while (currentRow < maxRowCount) {
     const endRow = Math.min(currentRow + EMPTY_ROW_BATCH_SIZE, maxRowCount);
     const csv = await tencentDocs.readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, endRow, colCount, currentRow);
-    const lines = csv.split('\n').filter(l => l.trim());
-    for (let i = 0; i < lines.length; i++) {
-      const cells = tencentDocs.parseCsvLine(lines[i]);
+    const allLines = csv.split('\n');
+    const expectedRows = endRow - currentRow;
+    for (let i = 0; i < Math.min(allLines.length, expectedRows); i++) {
+      const cells = tencentDocs.parseCsvLine(allLines[i]);
       if (cells.every(c => !c || !c.trim())) {
         return currentRow + i;
       }
@@ -375,7 +376,8 @@ async function handleRequest(req, res) {
         targetFileId, sheet.sheet_id, Math.min(sheet.row_count, HEADER_SAMPLE_ROW_LIMIT), sheet.col_count
       );
 
-      const lines = csv.split('\n').filter(l => l.trim());
+      const allLines = csv.split('\n');
+      const lines = allLines.filter(l => l.trim());
       if (lines.length === 0) {
         sendJSON(res, 400, { success: false, error: '工作表为空' });
         return;
@@ -394,20 +396,21 @@ async function handleRequest(req, res) {
         extractRowData(config.llm, headers, target.name, description),
         wdtEnabled ? autoMatchWdtOrder(wdtCfg, description) : Promise.resolve(null)
       ]);
-      
+
       // 合并旺店通数据到提取结果
       if (wdtMatch) {
         mergeWdtData(headers, extractResult, wdtMatch);
       }
-      
+
       if (extractResult.nonEmptyCount === 0) {
         sendJSON(res, 400, { success: false, error: '未能从描述中提取到任何有效数据，请检查输入内容' });
         return;
       }
 
-      let emptyRowIndex = lines.length;
-      for (let i = 1; i < lines.length; i++) {
-        const cells = tencentDocs.parseCsvLine(lines[i]);
+      // 查找第一个空行时保留空行，避免跳过空行导致追加时间隔一行
+      let emptyRowIndex = allLines.length;
+      for (let i = 1; i < allLines.length; i++) {
+        const cells = tencentDocs.parseCsvLine(allLines[i]);
         const isEmpty = cells.every(c => !c || !c.trim());
         if (isEmpty) {
           emptyRowIndex = i;
