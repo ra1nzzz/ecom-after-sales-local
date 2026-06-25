@@ -733,7 +733,7 @@
       <div class="success-box" id="writeSuccess"></div>
       <div class="loading" id="writeLoading">
         <div class="spinner"></div>
-        <p>LLM 正在分析...</p>
+        <p>AI 正在分析...</p>
       </div>
 
       <div class="card" id="previewPanel" style="display:none">
@@ -1272,7 +1272,7 @@
             debugHtml += '<br><span style="color:var(--accent)">旺店通匹配: 原始单号=' + esc(d.wdtMatch.src_tids || '') + ' 物流单号=' + esc(d.wdtMatch.logistics_no || '') + ' 店铺=' + esc(d.wdtMatch.shop_name || '') + ' 平台=' + esc(d.wdtMatch.platform || '') + '</span>';
           }
           if (d.llmError) {
-            debugHtml += ' | LLM错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>';
+            debugHtml += ' | AI错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>';
           }
           $('debugInfo').innerHTML = debugHtml;
         } else {
