@@ -197,8 +197,9 @@ async function queryWarehouse(credentials, warehouseNo) {
     const result = await callApi(credentials, 'setting.Warehouse.queryWarehouse', {
       warehouse_no: warehouseNo
     });
-    if (result.status === 0 && result.data && result.data.length > 0) {
-      return result.data[0].warehouse_name || warehouseNo;
+    // 接口返回 data.details[].name
+    if (result.status === 0 && result.data && result.data.details && result.data.details.length > 0) {
+      return result.data.details[0].name || warehouseNo;
     }
   } catch (err) {
     console.error('[wdt] 查询仓库失败:', err.message);
