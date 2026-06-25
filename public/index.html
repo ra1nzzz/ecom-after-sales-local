@@ -609,7 +609,7 @@
   <div class="app">
     <header class="header">
       <div class="header-top">
-        <span class="header-tag">v2.1.0</span>
+        <span class="header-tag" id="appVersion">v2.1.0</span>
         <button class="theme-toggle" id="themeToggleBtn" onclick="toggleTheme()" title="切换主题" style="margin-left:auto;background:var(--bg-hover);border:1px solid var(--border);border-radius:6px;padding:6px 10px;cursor:pointer;font-size:14px;color:var(--text-secondary);transition:all 0.2s;">🌙</button>
       </div>
       <h1>和旭电商售后小工具</h1>
@@ -1763,6 +1763,20 @@
     }
 
     loadDocSelector('queryDocSelect');
+
+    // 动态加载版本号
+    (async function loadVersion() {
+      try {
+        const resp = await fetch('/api/version');
+        const data = await resp.json();
+        if (data.success && data.data && data.data.version) {
+          const el = $('appVersion');
+          if (el) el.textContent = 'v' + data.data.version;
+        }
+      } catch (err) {
+        console.error('加载版本号失败:', err);
+      }
+    })();
   </script>
 </body>
 </html>

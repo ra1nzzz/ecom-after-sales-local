@@ -141,13 +141,18 @@ async function handleRequest(req, res) {
         return;
       }
       try {
-        // 写入 Windows 用户环境变量，持久化且不会提交到 GitHub
-        const escaped = password.replace(/'/g, "''");
-        require('child_process').execSync(
-          `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('SETTINGS_PASSWORD', '${escaped}', 'User')"`,
-          { stdio: 'ignore' }
-        );
+        // 先更新内存，立即响应前端
         process.env.SETTINGS_PASSWORD = password;
+        // 异步写入 Windows 用户环境变量，持久化且不会提交到 GitHub
+        const escaped = password.replace(/'/g, "''");
+        require('child_process').exec(
+          `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('SETTINGS_PASSWORD', '${escaped}', 'User')"`,
+          { stdio: 'ignore' },
+          (err) => {
+            if (err) console.error('[settings] 持久化密码失败:', err.message);
+            else console.log('[settings] 访问密码已持久化到 Windows 用户环境变量');
+          }
+        );
         sendJSON(res, 200, { success: true, message: '访问密码已设置' });
       } catch (err) {
         sendJSON(res, 500, { success: false, error: '设置密码失败: ' + err.message });
@@ -168,6 +173,17 @@ async function handleRequest(req, res) {
       return;
     }
     sendJSON(res, 400, { success: false, error: '未知操作' });
+    return;
+  }
+
+  // --- 版本 API ---
+  if (url.pathname === '/api/version' && req.method === 'GET') {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+      sendJSON(res, 200, { success: true, data: { version: pkg.version } });
+    } catch (err) {
+      sendJSON(res, 200, { success: true, data: { version: 'unknown' } });
+    }
     return;
   }
 
