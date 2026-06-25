@@ -284,10 +284,10 @@ async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
   await initMcp(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state);
 
   // 腾讯文档 sheet.set_range_value 接口中：
-  // - row 为 1-based（从 1 开始）
+  // - row 为 0-based（从 0 开始）
   // - col 为 0-based（从 0 开始）
   const cellValues = values.map((val, idx) => ({
-    row: startRow + 1,
+    row: startRow,
     col: idx,
     value_type: 'STRING',
     string_value: String(val)
