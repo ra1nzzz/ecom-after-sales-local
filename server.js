@@ -124,6 +124,53 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // --- 设置密码 API ---
+  if (url.pathname === '/api/settings/password-status' && req.method === 'GET') {
+    const hasPassword = !!(process.env.SETTINGS_PASSWORD && process.env.SETTINGS_PASSWORD.trim());
+    sendJSON(res, 200, { success: true, data: { hasPassword } });
+    return;
+  }
+
+  if (url.pathname === '/api/settings/password' && req.method === 'POST') {
+    const body = await readBody(req);
+    const action = body.action;
+    const password = String(body.password || '').trim();
+    if (action === 'set') {
+      if (!password) {
+        sendJSON(res, 400, { success: false, error: '密码不能为空' });
+        return;
+      }
+      try {
+        // 写入 Windows 用户环境变量，持久化且不会提交到 GitHub
+        const escaped = password.replace(/'/g, "''");
+        require('child_process').execSync(
+          `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('SETTINGS_PASSWORD', '${escaped}', 'User')"`,
+          { stdio: 'ignore' }
+        );
+        process.env.SETTINGS_PASSWORD = password;
+        sendJSON(res, 200, { success: true, message: '访问密码已设置' });
+      } catch (err) {
+        sendJSON(res, 500, { success: false, error: '设置密码失败: ' + err.message });
+      }
+      return;
+    }
+    if (action === 'verify') {
+      const current = process.env.SETTINGS_PASSWORD || '';
+      if (!current) {
+        sendJSON(res, 400, { success: false, error: '尚未设置访问密码' });
+        return;
+      }
+      if (password === current) {
+        sendJSON(res, 200, { success: true, message: '验证通过' });
+      } else {
+        sendJSON(res, 401, { success: false, error: '密码错误' });
+      }
+      return;
+    }
+    sendJSON(res, 400, { success: false, error: '未知操作' });
+    return;
+  }
+
   // --- 配置 API ---
   if (url.pathname === '/api/config' && req.method === 'GET') {
     const safeConfig = JSON.parse(JSON.stringify(config));
