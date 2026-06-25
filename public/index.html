@@ -794,7 +794,7 @@
                 <option value="deepseek">DeepSeek</option>
                 <option value="doubao">豆包 (火山引擎)</option>
                 <option value="qwen">通义千问</option>
-                <option value="stepfun">阶跃星辰</option>
+                <option value="stepfun">阶跃星辰TOKENPLAN</option>
                 <option value="ollama">Ollama (本地)</option>
                 <option value="openai">OpenAI</option>
                 <option value="custom">自定义</option>
@@ -1681,17 +1681,18 @@
       $('customProviderNameGroup').style.display = isCustom ? 'block' : 'none';
 
       const presets = {
-        deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
+        deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-v4-flash' },
         doubao: { url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k' },
         qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
-        stepfun: { url: 'https://api.stepfun.com/v1', model: 'step-1-8k' },
+        stepfun: { url: 'https://api.stepfun.com/step_plan/v1', model: 'step-3.7-flash' },
         ollama: { url: 'http://localhost:11434/v1', model: 'qwen2.5:7b' },
         openai: { url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
       };
       const preset = presets[provider];
       if (preset) {
-        $('cfgLlmUrl').value = preset.url;
-        $('cfgLlmModel').value = preset.model;
+        // 仅在输入框为空时填充默认值，避免覆盖用户手动修改的内容
+        if (!$('cfgLlmUrl').value) $('cfgLlmUrl').value = preset.url;
+        if (!$('cfgLlmModel').value) $('cfgLlmModel').value = preset.model;
       }
     }
 
