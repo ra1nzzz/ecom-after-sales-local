@@ -779,9 +779,15 @@
                 <option value="deepseek">DeepSeek</option>
                 <option value="doubao">豆包 (火山引擎)</option>
                 <option value="qwen">通义千问</option>
+                <option value="stepfun">阶跃星辰</option>
                 <option value="ollama">Ollama (本地)</option>
                 <option value="openai">OpenAI</option>
+                <option value="custom">自定义</option>
               </select>
+            </div>
+            <div class="form-group" id="customProviderNameGroup" style="display:none">
+              <label>自定义服务商名</label>
+              <input type="text" id="cfgLlmCustomName" placeholder="例如 MyLLM"/>
             </div>
             <div class="form-group">
               <label>模型名称</label>
@@ -1269,7 +1275,7 @@
           $('debugInfo').style.display = 'block';
           let debugHtml = '识别方式: <span style="color:var(--accent)">' + esc(d.method) + '</span> | 耗时: ' + d.parseTime + 'ms | 非空字段: ' + d.nonEmptyCount + '/' + d.headerCount;
           if (d.wdtMatch) {
-            debugHtml += '<br><span style="color:var(--accent)">旺店通匹配: 原始单号=' + esc(d.wdtMatch.src_tids || '') + ' 物流单号=' + esc(d.wdtMatch.logistics_no || '') + ' 店铺=' + esc(d.wdtMatch.shop_name || '') + ' 平台=' + esc(d.wdtMatch.platform || '') + ' 云仓=' + esc(d.wdtMatch.warehouse_no || '') + '</span>';
+            debugHtml += '<br><span style="color:var(--accent)">旺店通匹配: 原始单号=' + esc(d.wdtMatch.src_tids || '') + ' 物流单号=' + esc(d.wdtMatch.logistics_no || '') + ' 店铺=' + esc(d.wdtMatch.shop_name || '') + ' 平台=' + esc(d.wdtMatch.platform || '') + ' 云仓=' + esc(d.wdtMatch.warehouse_name || d.wdtMatch.warehouse_no || '') + '</span>';
           }
           if (d.llmError) {
             debugHtml += ' | AI错误: <span style="color:var(--danger)">' + esc(d.llmError) + '</span>';
@@ -1416,9 +1422,11 @@
         $('cfgTencentUrl').value = currentConfig.tencentDocs.mcpUrl || '';
 
         $('cfgLlmProvider').value = currentConfig.llm.provider || 'deepseek';
+        $('cfgLlmCustomName').value = currentConfig.llm.customProviderName || '';
         $('cfgLlmModel').value = currentConfig.llm.model || '';
         $('cfgLlmKey').value = currentConfig.llm.apiKey || '';
         $('cfgLlmUrl').value = currentConfig.llm.baseUrl || '';
+        onLlmProviderChange();
 
         $('cfgCacheTtl').value = (currentConfig.cache.ttl || 300000) / 1000;
         $('cfgCacheRefresh').value = (currentConfig.cache.autoRefreshInterval || 1800000) / 1000;
@@ -1592,10 +1600,14 @@
 
     function onLlmProviderChange() {
       const provider = $('cfgLlmProvider').value;
+      const isCustom = provider === 'custom';
+      $('customProviderNameGroup').style.display = isCustom ? 'block' : 'none';
+
       const presets = {
         deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-chat' },
         doubao: { url: 'https://ark.cn-beijing.volces.com/api/v3', model: 'doubao-1-5-pro-32k' },
         qwen: { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus' },
+        stepfun: { url: 'https://api.stepfun.com/v1', model: 'step-1-8k' },
         ollama: { url: 'http://localhost:11434/v1', model: 'qwen2.5:7b' },
         openai: { url: 'https://api.openai.com/v1', model: 'gpt-4o-mini' }
       };
@@ -1609,6 +1621,7 @@
     async function testLLM() {
       const llmConfig = {
         provider: $('cfgLlmProvider').value,
+        customProviderName: $('cfgLlmCustomName').value,
         apiKey: $('cfgLlmKey').value.includes('****') ? (currentConfig.llm.apiKey || '') : $('cfgLlmKey').value,
         baseUrl: $('cfgLlmUrl').value,
         model: $('cfgLlmModel').value
@@ -1642,6 +1655,7 @@
         },
         llm: {
           provider: $('cfgLlmProvider').value,
+          customProviderName: $('cfgLlmProvider').value === 'custom' ? $('cfgLlmCustomName').value : '',
           apiKey: $('cfgLlmKey').value,
           baseUrl: $('cfgLlmUrl').value,
           model: $('cfgLlmModel').value

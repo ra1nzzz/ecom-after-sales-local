@@ -14,6 +14,7 @@ const DEFAULT_CONFIG = {
   },
   llm: {
     provider: 'deepseek',
+    customProviderName: '',
     apiKey: '',
     baseUrl: 'https://api.deepseek.com',
     model: 'deepseek-chat'

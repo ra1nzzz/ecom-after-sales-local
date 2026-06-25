@@ -189,6 +189,24 @@ function formatTradeStatus(status) {
 }
 
 /**
+ * 查询仓库名称
+ */
+async function queryWarehouse(credentials, warehouseNo) {
+  if (!warehouseNo) return '';
+  try {
+    const result = await callApi(credentials, 'setting.Warehouse.queryWarehouse', {
+      warehouse_no: warehouseNo
+    });
+    if (result.status === 0 && result.data && result.data.length > 0) {
+      return result.data[0].warehouse_name || warehouseNo;
+    }
+  } catch (err) {
+    console.error('[wdt] 查询仓库失败:', err.message);
+  }
+  return warehouseNo;
+}
+
+/**
  * 从描述文本中自动匹配旺店通订单
  * 遍历描述中的每个 token，提取可能的物流单号并查询旺店通，
  * 返回第一个匹配到的订单对象（或 null）。
@@ -201,7 +219,11 @@ async function autoMatchWdtOrder(credentials, description) {
       try {
         const wdtResult = await queryOrder(credentials, cleaned);
         if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
-          return wdtResult.orders[0];
+          const order = wdtResult.orders[0];
+          if (order.warehouse_no) {
+            order.warehouse_name = await queryWarehouse(credentials, order.warehouse_no);
+          }
+          return order;
         }
       } catch (e) { /* 忽略旺店通查询错误 */ }
     }

@@ -27,6 +27,7 @@
   },
   "llm": {
     "provider": "deepseek",
+    "customProviderName": "",
     "apiKey": "YOUR_LLM_API_KEY",
     "baseUrl": "https://api.deepseek.com",
     "model": "deepseek-chat"

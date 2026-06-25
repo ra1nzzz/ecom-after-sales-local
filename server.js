@@ -153,6 +153,8 @@ async function handleRequest(req, res) {
       if (body.llm) {
         newConfig.llm = {
           provider: body.llm.provider || config.llm.provider,
+          customProviderName: body.llm.customProviderName !== undefined
+            ? body.llm.customProviderName : config.llm.customProviderName,
           apiKey: (body.llm.apiKey && !body.llm.apiKey.includes('****'))
             ? body.llm.apiKey : config.llm.apiKey,
           baseUrl: body.llm.baseUrl || config.llm.baseUrl,
@@ -437,7 +439,7 @@ async function handleRequest(req, res) {
             nonEmptyCount: extractResult.nonEmptyCount,
             headerCount: headers.length,
             totalLines: lines.length,
-            wdtMatch: wdtMatch ? { src_tids: wdtMatch.src_tids, logistics_no: wdtMatch.logistics_no, shop_name: wdtMatch.shop_name, platform: wdtMatch.platform, warehouse_no: wdtMatch.warehouse_no } : null
+            wdtMatch: wdtMatch ? { src_tids: wdtMatch.src_tids, logistics_no: wdtMatch.logistics_no, shop_name: wdtMatch.shop_name, platform: wdtMatch.platform, warehouse_no: wdtMatch.warehouse_no, warehouse_name: wdtMatch.warehouse_name } : null
           }
         }
       });

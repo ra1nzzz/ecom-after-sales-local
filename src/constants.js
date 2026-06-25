@@ -60,8 +60,8 @@ const WDT_FIELD_MAP = {
   '店铺名称': 'parsedShopName',
   '店铺': 'parsedShopName',
   '平台': 'platform',
-  '云仓': 'warehouse_no',
-  '仓库': 'warehouse_no'
+  '云仓': 'warehouse_name',
+  '仓库': 'warehouse_name'
 };
 
 // 物流单号提取正则：纯字母数字、长度 >= 8、含数字
