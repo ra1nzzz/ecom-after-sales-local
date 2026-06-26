@@ -483,17 +483,113 @@ async function handleRequest(req, res) {
         }
       }
 
+      // --- 查重检测 ---
+      // 找到物流单号列索引
+      const logisticsColIdx = headers.findIndex(h => {
+        const name = (h || '').trim();
+        return name === '快递单号' || name === '物流单号';
+      });
+
+      let duplicateInfo = null;
+      if (logisticsColIdx >= 0) {
+        const newLogisticsNo = (extractResult.values[logisticsColIdx] || '').trim();
+        if (newLogisticsNo) {
+          // 在已有行中搜索匹配的物流单号
+          for (let i = 1; i < allLines.length; i++) {
+            const rowCells = tencentDocs.parseCsvLine(allLines[i]);
+            const existingNo = (rowCells[logisticsColIdx] || '').trim();
+            if (existingNo === newLogisticsNo) {
+              // 补齐 rowCells 到 headers 长度
+              while (rowCells.length < headers.length) rowCells.push('');
+              const existingValues = headers.map((_, idx) => rowCells[idx] || '');
+
+              // 判断是否信息完整（排除"备注"列）
+              const emptyFieldIndices = [];
+              for (let j = 0; j < headers.length; j++) {
+                const headerName = (headers[j] || '').trim();
+                const isRemark = headerName === '备注' || headerName === 'remark';
+                const val = (existingValues[j] || '').trim();
+                if (!val && !isRemark) {
+                  emptyFieldIndices.push(j);
+                }
+              }
+
+              const isComplete = emptyFieldIndices.length === 0;
+
+              if (isComplete) {
+                // Case 1: 已完整登记，提示是否覆盖
+                duplicateInfo = {
+                  type: 'overwrite',
+                  existingRow: i,
+                  existingValues: existingValues,
+                  newValues: extractResult.values.slice(),
+                  changedFields: []
+                };
+                // 找出有差异的字段
+                for (let j = 0; j < headers.length; j++) {
+                  const oldVal = (existingValues[j] || '').trim();
+                  const newVal = (extractResult.values[j] || '').trim();
+                  if (oldVal !== newVal) {
+                    duplicateInfo.changedFields.push({
+                      col: j,
+                      header: headers[j],
+                      oldValue: existingValues[j] || '',
+                      newValue: extractResult.values[j] || ''
+                    });
+                  }
+                }
+              } else {
+                // Case 2: 登记不全，自动补全空缺字段
+                const mergedValues = existingValues.slice();
+                const filledFields = [];
+                for (let j = 0; j < headers.length; j++) {
+                  const existingVal = (existingValues[j] || '').trim();
+                  const newVal = (extractResult.values[j] || '').trim();
+                  if (!existingVal && newVal) {
+                    mergedValues[j] = newVal;
+                    filledFields.push({
+                      col: j,
+                      header: headers[j],
+                      oldValue: '',
+                      newValue: newVal
+                    });
+                  }
+                }
+                duplicateInfo = {
+                  type: 'merge',
+                  existingRow: i,
+                  existingValues: existingValues,
+                  newValues: extractResult.values.slice(),
+                  mergedValues: mergedValues,
+                  filledFields: filledFields,
+                  emptyFieldIndices: emptyFieldIndices
+                };
+              }
+              break; // 找到第一个匹配即停止
+            }
+          }
+        }
+      }
+
+      // 如果查重命中，使用已有行作为目标行
+      const finalTargetRow = duplicateInfo ? duplicateInfo.existingRow : emptyRowIndex;
+      // 如果是合并模式，使用合并后的值
+      const finalValues = (duplicateInfo && duplicateInfo.type === 'merge')
+        ? duplicateInfo.mergedValues
+        : extractResult.values;
+
       sendJSON(res, 200, {
         success: true,
         data: {
           headers,
-          values: extractResult.values,
+          values: finalValues,
           missing: extractResult.missing,
-          targetRow: emptyRowIndex,
+          targetRow: finalTargetRow,
           sheetName: sheet.sheet_name,
           sheetId: sheet.sheet_id,
           targetFileId: targetFileId,
-          preview: buildPreviewText(headers, extractResult.values),
+          preview: buildPreviewText(headers, finalValues),
+          duplicate: duplicateInfo,
           debug: {
             method: extractResult.method,
             parseTime: extractResult.parseTime,
