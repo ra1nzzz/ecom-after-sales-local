@@ -1,6 +1,6 @@
 {
   "name": "kuaidi-after-sales",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "综合电商售后处理系统 - 可配置、可复用、可读、可写",
   "main": "server.js",
   "scripts": {
