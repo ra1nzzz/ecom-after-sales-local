@@ -141,19 +141,34 @@ async function handleRequest(req, res) {
         sendJSON(res, 400, { success: false, error: '密码不能为空' });
         return;
       }
+      // 安全：已设置密码时，禁止通过 set 覆盖（防止未授权重置）
+      const existing = process.env.SETTINGS_PASSWORD;
+      if (existing && existing.trim()) {
+        sendJSON(res, 403, { success: false, error: '密码已设置，如需修改请先重启服务并清除环境变量 SETTINGS_PASSWORD' });
+        return;
+      }
       try {
         // 先更新内存，立即响应前端
         process.env.SETTINGS_PASSWORD = password;
-        // 异步写入 Windows 用户环境变量，持久化且不会提交到 GitHub
-        const escaped = password.replace(/'/g, "''");
-        require('child_process').exec(
-          `powershell -NoProfile -Command "[Environment]::SetEnvironmentVariable('SETTINGS_PASSWORD', '${escaped}', 'User')"`,
-          { stdio: 'ignore' },
+        // 安全：使用 execFile（不经 shell）避免命令注入
+        // 密码通过 stdin 传递给 PowerShell，完全不进入命令行参数
+        const { execFile } = require('child_process');
+        const psScript = `
+          $line = [Console]::In.ReadToEnd().TrimEnd()
+          [Environment]::SetEnvironmentVariable('SETTINGS_PASSWORD', $line, 'User')
+        `;
+        const child = execFile(
+          'powershell.exe',
+          ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', psScript],
+          { stdio: ['pipe', 'ignore', 'ignore'] },
           (err) => {
             if (err) console.error('[settings] 持久化密码失败:', err.message);
             else console.log('[settings] 访问密码已持久化到 Windows 用户环境变量');
           }
         );
+        // 通过 stdin 写入密码，避免出现在进程命令行中
+        child.stdin.write(password);
+        child.stdin.end();
         sendJSON(res, 200, { success: true, message: '访问密码已设置' });
       } catch (err) {
         sendJSON(res, 500, { success: false, error: '设置密码失败: ' + err.message });
