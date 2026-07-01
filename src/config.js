@@ -12,6 +12,15 @@ const DEFAULT_CONFIG = {
     apiKey: '',
     mcpUrl: 'https://docs.qq.com/openapi/mcp'
   },
+  feishuDocs: {
+    appId: '',
+    appSecret: ''
+  },
+  jinshanDocs: {
+    appId: '',
+    appKey: '',
+    accessToken: ''
+  },
   llm: {
     provider: 'deepseek',
     customProviderName: '',
@@ -95,8 +104,16 @@ function getWriteDefaultDocument(config) {
 
 function validateConfig(config) {
   const errors = [];
-  if (!config.tencentDocs.apiKey) {
+  // 检查已使用的提供商的凭据
+  const usedProviders = new Set(config.documents.map(d => d.provider || 'tencent'));
+  if (usedProviders.has('tencent') && !config.tencentDocs.apiKey) {
     errors.push('腾讯文档 API Key 未配置');
+  }
+  if (usedProviders.has('feishu') && !config.feishuDocs.appId) {
+    errors.push('飞书 App ID 未配置');
+  }
+  if (usedProviders.has('jinshan') && !config.jinshanDocs.accessToken) {
+    errors.push('金山文档 Access Token 未配置');
   }
   if (!config.documents || config.documents.length === 0) {
     errors.push('至少需要配置一个文档');

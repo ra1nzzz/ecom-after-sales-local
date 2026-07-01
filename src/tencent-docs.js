@@ -1,8 +1,24 @@
+/**
+ * tencent-docs.js - 腾讯文档适配器（统一适配器接口）
+ *
+ * 实现 shared-docs.js 定义的统一适配器接口：
+ *   init / getSheetList / readSheetCsv / writeRow / getDocState / clearCache
+ * 其中 providerConfig = { apiKey, mcpUrl }
+ *
+ * 通用工具（parseCsvLine / parseSheetCsv / searchRecords / fetchData）
+ * 已抽取到 ./shared-docs，这里重新导出以保持向后兼容。
+ */
+
 const https = require('https');
+const {
+  MAX_COL_COUNT,
+  parseCsvLine,
+  parseSheetCsv,
+  searchRecords,
+  fetchData: sharedFetchData
+} = require('./shared-docs');
 
-// 读取单元格数据时限制的最大列数，防止请求过大
-const MAX_COL_COUNT = 10;
-
+// ---- 文档状态管理 ----
 const docStates = new Map();
 
 function getDocState(fileId) {
@@ -17,6 +33,14 @@ function getDocState(fileId) {
   return docStates.get(fileId);
 }
 
+function clearCache(fileId) {
+  const state = getDocState(fileId);
+  state.cachedData = null;
+  state.cacheTimestamp = 0;
+  state.mcpSessionId = null;
+}
+
+// ---- MCP 内部通信函数（不直接导出） ----
 function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
@@ -110,7 +134,11 @@ function extractText(toolResult) {
   return text;
 }
 
-async function initMcp(mcpUrl, apiKey, state) {
+// ---- 统一适配器接口 ----
+// providerConfig = { apiKey, mcpUrl }
+
+async function init(providerConfig, state) {
+  const { mcpUrl, apiKey } = providerConfig;
   if (state.mcpSessionId) return;
   const { sessionId } = await callMcpApi(mcpUrl, apiKey, 'initialize', {
     protocolVersion: '2024-11-05',
@@ -122,7 +150,8 @@ async function initMcp(mcpUrl, apiKey, state) {
   await new Promise(r => setTimeout(r, 500));
 }
 
-async function getSheetList(mcpUrl, apiKey, state, fileId) {
+async function getSheetList(providerConfig, state, fileId) {
+  const { mcpUrl, apiKey } = providerConfig;
   const { result, sessionId } = await callTool(mcpUrl, apiKey, state.mcpSessionId, 'sheet.get_sheet_info', { file_id: fileId });
   state.mcpSessionId = sessionId;
   const text = extractText(result);
@@ -133,7 +162,8 @@ async function getSheetList(mcpUrl, apiKey, state, fileId) {
   return [];
 }
 
-async function readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, rowCount, colCount, startRow = 0) {
+async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, colCount, startRow = 0) {
+  const { mcpUrl, apiKey } = providerConfig;
   const { result, sessionId } = await callTool(mcpUrl, apiKey, state.mcpSessionId, 'sheet.get_cell_data', {
     file_id: fileId,
     sheet_id: sheetId,
@@ -147,141 +177,10 @@ async function readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, rowCount, co
   return extractText(result);
 }
 
-function parseCsvLine(line) {
-  const cells = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') {
-        current += '"';
-        i++;
-      } else if (ch === '"') {
-        inQuotes = false;
-      } else {
-        current += ch;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ',') {
-        cells.push(current.trim());
-        current = '';
-      } else {
-        current += ch;
-      }
-    }
-  }
-  cells.push(current.trim());
-  return cells;
-}
-
-function parseSheetCsv(csvText, sheetName) {
-  const lines = csvText.split('\n').filter(l => l.trim());
-  if (lines.length < 2) return [];
-
-  const headerCells = parseCsvLine(lines[0]);
-
-  const trackingIdx = headerCells.findIndex(h => h.includes('快递单号') || h.includes('单号'));
-  if (trackingIdx === -1) return [];
-
-  const dateIdx = headerCells.findIndex(h => h.includes('登记日期') || h.includes('日期'));
-  const productIdx = headerCells.findIndex(h => h.includes('商品名称') || h.includes('货品'));
-  const genuineIdx = headerCells.findIndex(h => h.includes('正品'));
-  const defectIdx = headerCells.findIndex(h => h.includes('次品') || h.includes('残品'));
-  const defectNoteIdx = headerCells.findIndex(h => h.includes('次品备注') || h.includes('残品备注'));
-  const remarkIdx = headerCells.findIndex(h => h === '备注');
-
-  const records = [];
-  for (let i = 1; i < lines.length; i++) {
-    const cells = parseCsvLine(lines[i]);
-    const trackingNo = (cells[trackingIdx] || '').trim();
-    if (!trackingNo) continue;
-
-    records.push({
-      _source: sheetName,
-      '登记日期': dateIdx >= 0 ? (cells[dateIdx] || '').trim() : '',
-      '快递单号': trackingNo,
-      '商品名称': productIdx >= 0 ? (cells[productIdx] || '').trim() : '',
-      '正品数量': genuineIdx >= 0 ? (cells[genuineIdx] || '').trim() : '',
-      '次品数量': defectIdx >= 0 ? (cells[defectIdx] || '').trim() : '',
-      '次品备注': defectNoteIdx >= 0 ? (cells[defectNoteIdx] || '').trim() : '',
-      '备注': remarkIdx >= 0 ? (cells[remarkIdx] || '').trim() : ''
-    });
-  }
-
-  return records;
-}
-
-async function fetchData(docConfig, tencentDocsConfig, cacheTTL) {
-  const state = getDocState(docConfig.fileId);
-  const now = Date.now();
-
-  if (state.cachedData && (now - state.cacheTimestamp) < cacheTTL) {
-    return state.cachedData;
-  }
-
-  if (state.cacheLoading) {
-    return new Promise((resolve) => {
-      const check = setInterval(() => {
-        if (!state.cacheLoading) { clearInterval(check); resolve(state.cachedData); }
-      }, 200);
-    });
-  }
-
-  state.cacheLoading = true;
-  try {
-    await initMcp(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state);
-    const sheets = await getSheetList(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state, docConfig.fileId);
-
-    const keywords = docConfig.readSheetKeywords || ['客退', '退货'];
-    const dataSheets = sheets.filter(sheet => keywords.some(kw => sheet.sheet_name.includes(kw)));
-
-    // 并行读取所有匹配的 sheet，提升多表文档的加载速度
-    const results = await Promise.allSettled(
-      dataSheets.map(sheet =>
-        readSheetCsv(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state, docConfig.fileId, sheet.sheet_id, sheet.row_count, sheet.col_count)
-          .then(csv => parseSheetCsv(csv, sheet.sheet_name))
-      )
-    );
-
-    const allRecords = [];
-    for (let i = 0; i < results.length; i++) {
-      if (results[i].status === 'fulfilled') {
-        allRecords.push(...results[i].value);
-      } else {
-        console.error(`    读取失败 [${dataSheets[i].sheet_name}]: ${results[i].reason.message}`);
-      }
-    }
-
-    state.cachedData = allRecords;
-    state.cacheTimestamp = now;
-    return allRecords;
-  } catch (err) {
-    if (state.cachedData) return state.cachedData;
-    throw err;
-  } finally {
-    state.cacheLoading = false;
-  }
-}
-
-function searchRecords(records, query) {
-  if (!query || query.trim() === '') return [];
-  const q = query.trim().toLowerCase();
-  return records.filter(r => (r['快递单号'] || '').toLowerCase().includes(q));
-}
-
-function clearCache(fileId) {
+async function writeRow(providerConfig, fileId, sheetId, startRow, values) {
+  const { mcpUrl, apiKey } = providerConfig;
   const state = getDocState(fileId);
-  state.cachedData = null;
-  state.cacheTimestamp = 0;
-  state.mcpSessionId = null;
-}
-
-async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
-  const state = getDocState(fileId);
-  await initMcp(tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state);
+  await init(providerConfig, state);
 
   // 腾讯文档 sheet.set_range_value 接口中：
   // - row 为 0-based（从 0 开始）
@@ -300,7 +199,7 @@ async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
   };
 
   const { result, sessionId } = await callTool(
-    tencentDocsConfig.mcpUrl, tencentDocsConfig.apiKey, state.mcpSessionId,
+    mcpUrl, apiKey, state.mcpSessionId,
     'sheet.set_range_value', args
   );
   state.mcpSessionId = sessionId;
@@ -314,18 +213,44 @@ async function writeRow(tencentDocsConfig, fileId, sheetId, startRow, values) {
   }
 }
 
+// ---- 向后兼容封装 ----
+
+// 旧签名 initMcp(mcpUrl, apiKey, state) → 委托给统一接口 init
+async function initMcp(mcpUrl, apiKey, state) {
+  return init({ mcpUrl, apiKey }, state);
+}
+
+// 适配器对象，供共享 fetchData 使用
+const tencentAdapter = {
+  init,
+  getSheetList,
+  readSheetCsv,
+  getDocState,
+  clearCache
+};
+
+// 向后兼容的 fetchData：保持原有签名 (docConfig, providerConfig, cacheTTL)
+// 内部委托给 shared-docs 的 fetchData(adapter, docConfig, providerConfig, cacheTTL)
+function fetchData(docConfig, providerConfig, cacheTTL) {
+  return sharedFetchData(tencentAdapter, docConfig, providerConfig, cacheTTL);
+}
+
 module.exports = {
+  // 统一适配器接口
+  init,
   getSheetList,
   readSheetCsv,
   readSheetHeaders: readSheetCsv,
+  writeRow,
+  getDocState,
+  clearCache,
+  // 向后兼容：共享工具（从 shared-docs 重新导出）
   parseCsvLine,
   parseSheetCsv,
-  fetchData,
   searchRecords,
-  clearCache,
+  fetchData,
+  // 向后兼容：MCP 专用函数
   initMcp,
   callTool,
-  extractText,
-  getDocState,
-  writeRow
+  extractText
 };

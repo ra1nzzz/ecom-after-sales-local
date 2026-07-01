@@ -20,7 +20,8 @@ const fs = require('fs');
 })();
 
 const { loadConfig, saveConfig, getDocumentById, getWriteDefaultDocument, validateConfig } = require('./src/config');
-const tencentDocs = require('./src/tencent-docs');
+const docProvider = require('./src/doc-provider');
+const tencentDocs = require('./src/tencent-docs'); // 向后兼容，部分内部函数仍需要
 const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
 const wangdian = require('./src/wangdian');
@@ -37,15 +38,15 @@ let config = loadConfig();
 const EMPTY_ROW_BATCH_SIZE = 50;
 
 // 从 startRow 开始查找第一个全空行，用于追加写入
-async function findNextEmptyRow(mcpUrl, apiKey, state, fileId, sheetId, startRow, colCount, maxRowCount) {
+async function findNextEmptyRow(doc, state, fileId, sheetId, startRow, colCount, maxRowCount) {
   let currentRow = startRow;
   while (currentRow < maxRowCount) {
     const endRow = Math.min(currentRow + EMPTY_ROW_BATCH_SIZE, maxRowCount);
-    const csv = await tencentDocs.readSheetCsv(mcpUrl, apiKey, state, fileId, sheetId, endRow, colCount, currentRow);
+    const csv = await docProvider.readSheetCsv(doc, config, state, fileId, sheetId, endRow, colCount, currentRow);
     const allLines = csv.split('\n');
     const expectedRows = endRow - currentRow;
     for (let i = 0; i < Math.min(allLines.length, expectedRows); i++) {
-      const cells = tencentDocs.parseCsvLine(allLines[i]);
+      const cells = docProvider.parseCsvLine(allLines[i]);
       if (cells.every(c => !c || !c.trim())) {
         return currentRow + i;
       }
@@ -191,6 +192,11 @@ async function handleRequest(req, res) {
   if (url.pathname === '/api/config' && req.method === 'GET') {
     const safeConfig = JSON.parse(JSON.stringify(config));
     safeConfig.tencentDocs.apiKey = maskApiKey(safeConfig.tencentDocs.apiKey);
+    safeConfig.feishuDocs = safeConfig.feishuDocs || { appId: '', appSecret: '' };
+    safeConfig.feishuDocs.appSecret = maskApiKey(safeConfig.feishuDocs.appSecret || '');
+    safeConfig.jinshanDocs = safeConfig.jinshanDocs || { appId: '', appKey: '', accessToken: '' };
+    safeConfig.jinshanDocs.appKey = maskApiKey(safeConfig.jinshanDocs.appKey || '');
+    safeConfig.jinshanDocs.accessToken = maskApiKey(safeConfig.jinshanDocs.accessToken || '');
     safeConfig.llm.apiKey = maskApiKey(safeConfig.llm.apiKey);
     sendJSON(res, 200, { success: true, data: safeConfig });
     return;
@@ -213,6 +219,24 @@ async function handleRequest(req, res) {
         };
       }
 
+      if (body.feishuDocs) {
+        newConfig.feishuDocs = {
+          appId: body.feishuDocs.appId || '',
+          appSecret: (body.feishuDocs.appSecret && !body.feishuDocs.appSecret.includes('****'))
+            ? body.feishuDocs.appSecret : (config.feishuDocs ? config.feishuDocs.appSecret : '')
+        };
+      }
+
+      if (body.jinshanDocs) {
+        newConfig.jinshanDocs = {
+          appId: body.jinshanDocs.appId || '',
+          appKey: (body.jinshanDocs.appKey && !body.jinshanDocs.appKey.includes('****'))
+            ? body.jinshanDocs.appKey : (config.jinshanDocs ? config.jinshanDocs.appKey : ''),
+          accessToken: (body.jinshanDocs.accessToken && !body.jinshanDocs.accessToken.includes('****'))
+            ? body.jinshanDocs.accessToken : (config.jinshanDocs ? config.jinshanDocs.accessToken : '')
+        };
+      }
+
       if (body.llm) {
         newConfig.llm = {
           provider: body.llm.provider || config.llm.provider,
@@ -228,7 +252,7 @@ async function handleRequest(req, res) {
       saveConfig(newConfig);
       config = loadConfig();
       for (const doc of config.documents) {
-        tencentDocs.clearCache(doc.fileId);
+        docProvider.clearCache(doc, doc.fileId);
       }
       // 清理旧字段，避免混淆
       if ('defaultDocumentId' in newConfig) {
@@ -266,8 +290,8 @@ async function handleRequest(req, res) {
     }
 
     try {
-      const records = await tencentDocs.fetchData(doc, config.tencentDocs, config.cache.ttl);
-      const results = tencentDocs.searchRecords(records, query);
+      const records = await docProvider.fetchData(doc, config, config.cache.ttl);
+      const results = docProvider.searchRecords(records, query);
       sendJSON(res, 200, {
         success: true,
         query,
@@ -299,8 +323,8 @@ async function handleRequest(req, res) {
       return;
     }
     try {
-      tencentDocs.clearCache(doc.fileId);
-      const records = await tencentDocs.fetchData(doc, config.tencentDocs, config.cache.ttl);
+      docProvider.clearCache(doc, doc.fileId);
+      const records = await docProvider.fetchData(doc, config, config.cache.ttl);
       sendJSON(res, 200, { success: true, message: '数据刷新成功', total: records.length });
     } catch (err) {
       sendJSON(res, 500, { success: false, error: err.message });
@@ -354,9 +378,11 @@ async function handleRequest(req, res) {
 
     try {
       const targetFileId = target.fileId || doc.fileId;
-      const state = tencentDocs.getDocState(targetFileId);
-      await tencentDocs.initMcp(config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state);
-      const sheets = await tencentDocs.getSheetList(config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state, targetFileId);
+      const adapter = docProvider.getAdapter(doc);
+      const providerConfig = docProvider.getProviderConfig(config, doc);
+      const state = adapter.getDocState(targetFileId);
+      if (adapter.init) await adapter.init(providerConfig, state);
+      const sheets = await adapter.getSheetList(providerConfig, state, targetFileId);
 
       const sheet = sheets.find(s => s.sheet_name === target.sheetName) || sheets[0];
       if (!sheet) {
@@ -364,8 +390,8 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const csv = await tencentDocs.readSheetCsv(
-        config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
+      const csv = await adapter.readSheetCsv(
+        providerConfig, state,
         targetFileId, sheet.sheet_id, Math.min(sheet.row_count, HEADER_SAMPLE_ROW_LIMIT), sheet.col_count
       );
 
@@ -374,7 +400,7 @@ async function handleRequest(req, res) {
         sendJSON(res, 400, { success: false, error: '工作表为空' });
         return;
       }
-      const headers = tencentDocs.parseCsvLine(lines[0]);
+      const headers = docProvider.parseCsvLine(lines[0]);
       // 去除标题行末尾连续的空列，避免写入时产生多余空列导致视觉错位
       while (headers.length > 0 && !headers[headers.length - 1].trim()) {
         headers.pop();
@@ -426,9 +452,11 @@ async function handleRequest(req, res) {
 
     try {
       const targetFileId = target.fileId || doc.fileId;
-      const state = tencentDocs.getDocState(targetFileId);
-      await tencentDocs.initMcp(config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state);
-      const sheets = await tencentDocs.getSheetList(config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state, targetFileId);
+      const adapter = docProvider.getAdapter(doc);
+      const providerConfig = docProvider.getProviderConfig(config, doc);
+      const state = adapter.getDocState(targetFileId);
+      if (adapter.init) await adapter.init(providerConfig, state);
+      const sheets = await adapter.getSheetList(providerConfig, state, targetFileId);
       const sheet = sheets.find(s => s.sheet_name === target.sheetName) || sheets[0];
 
       if (!sheet) {
@@ -436,8 +464,8 @@ async function handleRequest(req, res) {
         return;
       }
 
-      const csv = await tencentDocs.readSheetCsv(
-        config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
+      const csv = await adapter.readSheetCsv(
+        providerConfig, state,
         targetFileId, sheet.sheet_id, Math.min(sheet.row_count, HEADER_SAMPLE_ROW_LIMIT), sheet.col_count
       );
 
@@ -447,7 +475,7 @@ async function handleRequest(req, res) {
         sendJSON(res, 400, { success: false, error: '工作表为空' });
         return;
       }
-      const headers = tencentDocs.parseCsvLine(lines[0]);
+      const headers = docProvider.parseCsvLine(lines[0]);
       // 去除标题行末尾连续的空列，避免写入时产生多余空列导致视觉错位
       while (headers.length > 0 && !headers[headers.length - 1].trim()) {
         headers.pop();
@@ -475,7 +503,7 @@ async function handleRequest(req, res) {
       // 查找第一个空行时保留空行，避免跳过空行导致追加时间隔一行
       let emptyRowIndex = allLines.length;
       for (let i = 1; i < allLines.length; i++) {
-        const cells = tencentDocs.parseCsvLine(allLines[i]);
+        const cells = docProvider.parseCsvLine(allLines[i]);
         const isEmpty = cells.every(c => !c || !c.trim());
         if (isEmpty) {
           emptyRowIndex = i;
@@ -496,7 +524,7 @@ async function handleRequest(req, res) {
         if (newLogisticsNo) {
           // 在已有行中搜索匹配的物流单号
           for (let i = 1; i < allLines.length; i++) {
-            const rowCells = tencentDocs.parseCsvLine(allLines[i]);
+            const rowCells = docProvider.parseCsvLine(allLines[i]);
             const existingNo = (rowCells[logisticsColIdx] || '').trim();
             if (existingNo === newLogisticsNo) {
               // 补齐 rowCells 到 headers 长度
@@ -637,8 +665,10 @@ async function handleRequest(req, res) {
     const writeDocId = targetFileId || doc.fileId;
 
     try {
-      const state = tencentDocs.getDocState(writeDocId);
-      const sheets = await tencentDocs.getSheetList(config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state, writeDocId);
+      const adapter = docProvider.getAdapter(doc);
+      const providerConfig = docProvider.getProviderConfig(config, doc);
+      const state = adapter.getDocState(writeDocId);
+      const sheets = await adapter.getSheetList(providerConfig, state, writeDocId);
       const sheet = sheets.find(s => s.sheet_id === sheetId);
       if (!sheet) {
         sendJSON(res, 400, { success: false, error: '未找到指定工作表' });
@@ -647,15 +677,15 @@ async function handleRequest(req, res) {
 
       // 执行写入前重新查找第一个空行，确保追加到已有内容的下一行
       const actualRow = await findNextEmptyRow(
-        config.tencentDocs.mcpUrl, config.tencentDocs.apiKey, state,
+        doc, state,
         writeDocId, sheetId, targetRow, sheet.col_count, sheet.row_count
       );
 
-      const result = await tencentDocs.writeRow(
-        config.tencentDocs, writeDocId, sheetId, actualRow, values
+      const result = await adapter.writeRow(
+        providerConfig, writeDocId, sheetId, actualRow, values
       );
 
-      tencentDocs.clearCache(writeDocId);
+      adapter.clearCache(writeDocId);
 
       sendJSON(res, 200, {
         success: true,
@@ -727,8 +757,8 @@ server.listen(PORT, HOST, async () => {
       // 并行刷新所有文档，减少刷新总耗时
       const results = await Promise.allSettled(
         config.documents.map(doc => {
-          tencentDocs.clearCache(doc.fileId);
-          return tencentDocs.fetchData(doc, config.tencentDocs, config.cache.ttl)
+          docProvider.clearCache(doc, doc.fileId);
+          return docProvider.fetchData(doc, config, config.cache.ttl)
             .then(records => ({ name: doc.name, count: records.length }));
         })
       );

@@ -785,6 +785,36 @@
           </div>
         </div>
 
+        <!-- 飞书配置 -->
+        <div class="settings-section">
+          <h3>飞书配置</h3>
+          <div class="form-group">
+            <label>App ID</label>
+            <input type="text" id="cfgFeishuAppId" placeholder="cli_xxx"/>
+          </div>
+          <div class="form-group">
+            <label>App Secret</label>
+            <input type="password" id="cfgFeishuAppSecret" placeholder="飞书应用密钥"/>
+          </div>
+        </div>
+
+        <!-- 金山文档配置 -->
+        <div class="settings-section">
+          <h3>金山文档配置</h3>
+          <div class="form-group">
+            <label>App ID</label>
+            <input type="text" id="cfgJinshanAppId" placeholder="WPS应用ID"/>
+          </div>
+          <div class="form-group">
+            <label>App Key</label>
+            <input type="password" id="cfgJinshanAppKey" placeholder="WPS应用密钥"/>
+          </div>
+          <div class="form-group">
+            <label>Access Token</label>
+            <input type="password" id="cfgJinshanAccessToken" placeholder="WPS访问令牌（可通过kdocs-cli auth获取）"/>
+          </div>
+        </div>
+
         <div class="settings-section">
           <h3>LLM 配置</h3>
           <div class="form-row">
@@ -872,8 +902,16 @@
           <input type="text" id="modalDocName" placeholder="如：和旭电商退货登记"/>
         </div>
         <div class="form-group">
-          <label>腾讯文档 File ID</label>
-          <input type="text" id="modalDocFileId" placeholder="文档 ID"/>
+          <label>文档类型</label>
+          <select id="modalDocProvider" onchange="onDocProviderChange()">
+            <option value="tencent">腾讯文档</option>
+            <option value="feishu">飞书</option>
+            <option value="jinshan">金山文档</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label id="modalDocFileIdLabel">腾讯文档 File ID</label>
+          <input type="text" id="modalDocFileId" placeholder="从文档URL中获取"/>
         </div>
         <div class="form-group">
           <label>读取 Sheet 关键词（逗号分隔）</label>
@@ -1605,6 +1643,23 @@
         $('cfgTencentKey').value = currentConfig.tencentDocs.apiKey || '';
         $('cfgTencentUrl').value = currentConfig.tencentDocs.mcpUrl || '';
 
+        if (currentConfig.feishuDocs) {
+          $('cfgFeishuAppId').value = currentConfig.feishuDocs.appId || '';
+          $('cfgFeishuAppSecret').value = currentConfig.feishuDocs.appSecret || '';
+        } else {
+          $('cfgFeishuAppId').value = '';
+          $('cfgFeishuAppSecret').value = '';
+        }
+        if (currentConfig.jinshanDocs) {
+          $('cfgJinshanAppId').value = currentConfig.jinshanDocs.appId || '';
+          $('cfgJinshanAppKey').value = currentConfig.jinshanDocs.appKey || '';
+          $('cfgJinshanAccessToken').value = currentConfig.jinshanDocs.accessToken || '';
+        } else {
+          $('cfgJinshanAppId').value = '';
+          $('cfgJinshanAppKey').value = '';
+          $('cfgJinshanAccessToken').value = '';
+        }
+
         $('cfgLlmProvider').value = currentConfig.llm.provider || 'deepseek';
         $('cfgLlmCustomName').value = currentConfig.llm.customProviderName || '';
         $('cfgLlmModel').value = currentConfig.llm.model || '';
@@ -1660,16 +1715,19 @@
         return;
       }
 
+      const providerNames = { tencent: '腾讯文档', feishu: '飞书', jinshan: '金山文档' };
       currentConfig.documents.forEach((doc, idx) => {
         const item = document.createElement('div');
         item.className = 'doc-list-item';
         const isQueryDefault = doc.id === currentConfig.queryDefaultDocumentId;
         const isWriteDefault = doc.id === currentConfig.writeDefaultDocumentId;
         const tags = [];
+        const providerName = providerNames[doc.provider || 'tencent'] || '腾讯文档';
+        tags.push('<span class="tag">' + esc(providerName) + '</span>');
         if (isQueryDefault) tags.push('<span class="tag">查询默认</span>');
         if (isWriteDefault) tags.push('<span class="tag">登记默认</span>');
         item.innerHTML =
-          '<span class="name">' + esc(doc.name) + (tags.length ? ' ' + tags.join(' ') : '') + '</span>' +
+          '<span class="name">' + esc(doc.name) + ' ' + tags.join(' ') + '</span>' +
           '<div class="actions">' +
             '<button class="btn btn-secondary btn-icon" onclick="editDocument(' + idx + ')">编辑</button>' +
             '<button class="btn btn-secondary btn-icon" onclick="deleteDocument(' + idx + ')">删除</button>' +
@@ -1680,6 +1738,18 @@
 
     let docModalEditIdx = -1;
 
+    function onDocProviderChange() {
+      const provider = $('modalDocProvider').value;
+      const labels = { tencent: '腾讯文档 File ID', feishu: '飞书 Spreadsheet Token', jinshan: '金山文档 File ID' };
+      const hints = {
+        tencent: '从腾讯文档URL中获取',
+        feishu: '从飞书表格URL获取（如 https://xxx.feishu.cn/sheets/{token}）',
+        jinshan: '从金山文档URL中获取'
+      };
+      $('modalDocFileIdLabel').textContent = labels[provider] || 'File ID';
+      $('modalDocFileId').placeholder = hints[provider] || '';
+    }
+
     function addDocument() {
       docModalEditIdx = -1;
       $('docModalTitle').textContent = '添加文档';
@@ -1689,6 +1759,8 @@
       $('modalDocTargets').value = '';
       $('modalDocQueryDefault').checked = false;
       $('modalDocWriteDefault').checked = false;
+      $('modalDocProvider').value = 'tencent';
+      onDocProviderChange();
       $('docModal').classList.add('visible');
       $('modalDocName').focus();
     }
@@ -1698,6 +1770,8 @@
       docModalEditIdx = idx;
       $('docModalTitle').textContent = '编辑文档';
       $('modalDocName').value = doc.name || '';
+      $('modalDocProvider').value = doc.provider || 'tencent';
+      onDocProviderChange();
       $('modalDocFileId').value = doc.fileId || '';
       $('modalDocKeywords').value = (doc.readSheetKeywords || []).join(',');
       $('modalDocTargets').value = (doc.writeTargets || []).map(t => t.name + '|' + t.sheetName).join('\n');
@@ -1732,6 +1806,7 @@
 
       const docData = {
         name: name,
+        provider: $('modalDocProvider').value,
         fileId: fileId,
         readSheetKeywords: keywords ? keywords.split(',').map(s => s.trim()).filter(Boolean) : ['客退', '退货'],
         writeTargets: writeTargets
@@ -1846,6 +1921,15 @@
         tencentDocs: {
           apiKey: $('cfgTencentKey').value,
           mcpUrl: $('cfgTencentUrl').value
+        },
+        feishuDocs: {
+          appId: $('cfgFeishuAppId').value,
+          appSecret: $('cfgFeishuAppSecret').value
+        },
+        jinshanDocs: {
+          appId: $('cfgJinshanAppId').value,
+          appKey: $('cfgJinshanAppKey').value,
+          accessToken: $('cfgJinshanAccessToken').value
         },
         llm: {
           provider: $('cfgLlmProvider').value,
