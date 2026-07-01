@@ -11,7 +11,7 @@
 
 const https = require('https');
 const crypto = require('crypto');
-const { makeGetDocState, makeClearCache, MAX_COL_COUNT, REQUEST_TIMEOUT, csvEscape, csvRow } = require('./shared-docs');
+const { makeGetDocState, makeClearCache, MAX_COL_COUNT, REQUEST_TIMEOUT, csvEscape, csvRow, splitCsvLines, parseCsvLine } = require('./shared-docs');
 
 const BASE_HOST = 'openapi.wps.cn';
 
@@ -332,6 +332,27 @@ async function writeRow(providerConfig, state, fileId, sheetId, startRow, values
   return { updateNum: created.length || 1 };
 }
 
+/**
+ * 查找下一个空行位置（金山文档专用）
+ *
+ * 金山 DBSheet 为追加式写入，readSheetCsv 返回全量记录。
+ * 这里一次读取全量 CSV，在内存中扫描第一个全空行。
+ * 避免外层 findNextEmptyRow 按 50 行批次反复调用 readSheetCsv 导致全量拉取 N 次。
+ *
+ * @returns {Promise<number>} 下一个空行的行号（0-based，含表头行）
+ */
+async function findEmptyRow(providerConfig, state, fileId, sheetId, startRow, colCount, maxRowCount) {
+  const csv = await readSheetCsv(providerConfig, state, fileId, sheetId, maxRowCount, colCount);
+  const lines = splitCsvLines(csv);
+  for (let i = Math.max(1, startRow); i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    if (cells.every(c => !c || !c.trim())) {
+      return i;
+    }
+  }
+  return lines.length; // 无空行，追加到末尾
+}
+
 /* =========================================================================
  * CSV / 记录转换辅助函数
  * ========================================================================= */
@@ -357,6 +378,7 @@ module.exports = {
   getSheetList,
   readSheetCsv,
   writeRow,
+  findEmptyRow,
   getDocState,
   clearCache,
   // 辅助函数（供测试与复用）

@@ -221,6 +221,8 @@ const tencentAdapter = {
   init,
   getSheetList,
   readSheetCsv,
+  writeRow,
+  findEmptyRow: null, // 使用 server.js 中的默认批次扫描实现
   getDocState,
   clearCache
 };
@@ -237,6 +239,7 @@ module.exports = {
   getSheetList,
   readSheetCsv,
   writeRow,
+  findEmptyRow: null,
   getDocState,
   clearCache,
   // 向后兼容：共享工具（从 shared-docs 重新导出）

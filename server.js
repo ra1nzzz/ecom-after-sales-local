@@ -37,7 +37,13 @@ let config = loadConfig();
 const EMPTY_ROW_BATCH_SIZE = 50;
 
 // 从 startRow 开始查找第一个全空行，用于追加写入
+// 如果适配器自带 findEmptyRow（如金山），则使用适配器实现；否则走默认批次扫描
 async function findNextEmptyRow(doc, state, fileId, sheetId, startRow, colCount, maxRowCount) {
+  // 优先使用适配器自带的 findEmptyRow
+  const adapterRow = await docProvider.findEmptyRow(doc, config, state, fileId, sheetId, startRow, colCount, maxRowCount);
+  if (adapterRow !== null) return adapterRow;
+
+  // 默认：按批次扫描（腾讯/飞书）
   let currentRow = startRow;
   while (currentRow < maxRowCount) {
     const endRow = Math.min(currentRow + EMPTY_ROW_BATCH_SIZE, maxRowCount);

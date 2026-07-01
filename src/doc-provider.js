@@ -123,6 +123,17 @@ async function writeRow(doc, config, state, fileId, sheetId, startRow, values) {
   return adapter.writeRow(providerConfig, state, fileId, sheetId, startRow, values);
 }
 
+/**
+ * 查找下一个空行
+ * 如果适配器自带 findEmptyRow 则使用它（如金山的内存扫描），否则返回 null 由调用方走默认批次逻辑
+ */
+async function findEmptyRow(doc, config, state, fileId, sheetId, startRow, colCount, maxRowCount) {
+  const adapter = getAdapter(doc);
+  if (!adapter.findEmptyRow) return null;
+  const providerConfig = getProviderConfig(config, doc);
+  return adapter.findEmptyRow(providerConfig, state, fileId, sheetId, startRow, colCount, maxRowCount);
+}
+
 module.exports = {
   PROVIDERS,
   ADAPTER_META,
@@ -140,5 +151,6 @@ module.exports = {
   getSheetList,
   readSheetCsv,
   init,
-  writeRow
+  writeRow,
+  findEmptyRow
 };
