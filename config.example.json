@@ -3,19 +3,32 @@
     {
       "id": "doc1",
       "name": "和旭电商退货登记",
-      "fileId": "YOUR_FILE_ID_HERE",
+      "provider": "tencent",
+      "fileId": "YOUR_TENCENT_FILE_ID",
       "readSheetKeywords": ["客退", "退货"],
       "writeTargets": [
-        {
-          "id": "claim",
-          "name": "快递理赔登记表",
-          "sheetName": "理赔登记"
-        },
-        {
-          "id": "exchange",
-          "name": "售后换货登记表",
-          "sheetName": "换货登记"
-        }
+        { "id": "claim", "name": "快递理赔登记表", "sheetName": "理赔登记" },
+        { "id": "exchange", "name": "售后换货登记表", "sheetName": "换货登记" }
+      ]
+    },
+    {
+      "id": "doc2",
+      "name": "飞书退货登记表",
+      "provider": "feishu",
+      "fileId": "YOUR_FEISHU_SPREADSHEET_TOKEN",
+      "readSheetKeywords": ["客退", "退货"],
+      "writeTargets": [
+        { "id": "claim", "name": "快递理赔登记表", "sheetName": "理赔登记" }
+      ]
+    },
+    {
+      "id": "doc3",
+      "name": "金山文档退货登记表",
+      "provider": "jinshan",
+      "fileId": "YOUR_JINSHAN_FILE_ID",
+      "readSheetKeywords": ["客退", "退货"],
+      "writeTargets": [
+        { "id": "claim", "name": "快递理赔登记表", "sheetName": "理赔登记" }
       ]
     }
   ],
@@ -24,6 +37,15 @@
   "tencentDocs": {
     "apiKey": "YOUR_TENCENT_DOCS_API_KEY",
     "mcpUrl": "https://docs.qq.com/openapi/mcp"
+  },
+  "feishuDocs": {
+    "appId": "YOUR_FEISHU_APP_ID",
+    "appSecret": "YOUR_FEISHU_APP_SECRET"
+  },
+  "jinshanDocs": {
+    "appId": "YOUR_JINSHAN_APP_ID",
+    "appKey": "YOUR_JINSHAN_APP_KEY",
+    "accessToken": "YOUR_JINSHAN_ACCESS_TOKEN"
   },
   "llm": {
     "provider": "deepseek",

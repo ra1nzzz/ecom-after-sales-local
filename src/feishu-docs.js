@@ -1,7 +1,5 @@
 const https = require('https');
-
-// 读取单元格数据时限制的最大列数，防止请求过大
-const MAX_COL_COUNT = 10;
+const { makeGetDocState, makeClearCache, MAX_COL_COUNT, REQUEST_TIMEOUT, csvEscape, arrayToCsv } = require('./shared-docs');
 
 // 飞书开放平台域名
 const FEISHU_HOST = 'open.feishu.cn';
@@ -14,28 +12,9 @@ let tokenPromise = null;
 // 提前刷新阈值：5 分钟
 const TOKEN_REFRESH_THRESHOLD = 5 * 60 * 1000;
 
-// 每个文档的缓存状态
-const docStates = new Map();
-
-function getDocState(fileId) {
-  if (!docStates.has(fileId)) {
-    docStates.set(fileId, {
-      cachedData: null,
-      cacheTimestamp: 0,
-      cacheLoading: false
-    });
-  }
-  return docStates.get(fileId);
-}
-
-/**
- * 清除指定文档的数据缓存（不重置令牌缓存）
- */
-function clearCache(fileId) {
-  const state = getDocState(fileId);
-  state.cachedData = null;
-  state.cacheTimestamp = 0;
-}
+// 文档状态管理（使用共享状态工厂）
+const getDocState = makeGetDocState();
+const clearCache = makeClearCache(getDocState);
 
 /**
  * 列索引（0-based）转 Excel 列字母
@@ -97,7 +76,7 @@ function request(method, path, headers, body) {
     });
 
     req.on('error', (e) => reject(new Error('请求飞书失败: ' + e.message)));
-    req.setTimeout(60000, () => { req.destroy(); reject(new Error('请求飞书超时')); });
+    req.setTimeout(REQUEST_TIMEOUT, () => { req.destroy(); reject(new Error('请求飞书超时')); });
     if (bodyData) req.write(bodyData);
     req.end();
   });
@@ -193,27 +172,6 @@ async function getSheetList(providerConfig, state, fileId) {
 }
 
 /**
- * 将 CSV 单元格值进行转义：包含逗号、引号、换行时用双引号包裹
- */
-function csvEscape(value) {
-  if (value === null || value === undefined) return '';
-  const str = String(value);
-  if (/[",\n\r]/.test(str)) {
-    return '"' + str.replace(/"/g, '""') + '"';
-  }
-  return str;
-}
-
-/**
- * 将二维数组转换为 CSV 字符串
- */
-function arrayToCsv(rows) {
-  return rows.map(row =>
-    (row || []).map(cell => csvEscape(cell)).join(',')
-  ).join('\n');
-}
-
-/**
  * 读取工作表指定区域数据并返回 CSV 字符串
  * @param {number} startRow - 起始行（0-based）
  * @returns {Promise<string>} CSV 字符串
@@ -247,7 +205,7 @@ async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, co
  * @param {Array} values - 待写入的值数组
  * @returns {Promise<{updateNum}>} 更新的单元格数量
  */
-async function writeRow(providerConfig, fileId, sheetId, startRow, values) {
+async function writeRow(providerConfig, state, fileId, sheetId, startRow, values) {
   const colCount = Math.max(1, values.length);
   const endColLetter = colToLetter(colCount - 1);
   // 飞书行号为 1-based：startRow(0-based) + 1，单行写入起止行相同
@@ -279,7 +237,6 @@ module.exports = {
   init,
   getSheetList,
   readSheetCsv,
-  readSheetHeaders: readSheetCsv,
   writeRow,
   getDocState,
   clearCache,

@@ -14,23 +14,17 @@ const PROVIDERS = {
   jinshan: jinshanDocs
 };
 
-const PROVIDER_LABELS = {
-  tencent: '腾讯文档',
-  feishu: '飞书',
-  jinshan: '金山文档'
+// 适配器元数据：数据驱动的配置掩码/校验/标签
+const ADAPTER_META = {
+  tencent: { configKey: 'tencentDocs', label: '腾讯文档', sensitiveFields: ['apiKey'], requiredFields: ['apiKey'], idLabel: 'File ID', idHint: '从腾讯文档URL中获取' },
+  feishu: { configKey: 'feishuDocs', label: '飞书', sensitiveFields: ['appSecret'], requiredFields: ['appId'], idLabel: 'Spreadsheet Token', idHint: '从飞书表格URL获取' },
+  jinshan: { configKey: 'jinshanDocs', label: '金山文档', sensitiveFields: ['appKey', 'accessToken'], requiredFields: ['accessToken'], idLabel: 'File ID', idHint: '从金山文档URL中获取' }
 };
 
-const PROVIDER_ID_LABELS = {
-  tencent: 'File ID',
-  feishu: 'Spreadsheet Token',
-  jinshan: 'File ID'
-};
-
-const PROVIDER_ID_HINTS = {
-  tencent: '从腾讯文档 URL 中获取',
-  feishu: '从飞书表格 URL 中获取（如 https://xxx.feishu.cn/sheets/{token}）',
-  jinshan: '从金山文档 URL 中获取'
-};
+// 向后兼容：从 ADAPTER_META 派生
+const PROVIDER_LABELS = Object.fromEntries(Object.entries(ADAPTER_META).map(([k, v]) => [k, v.label]));
+const PROVIDER_ID_LABELS = Object.fromEntries(Object.entries(ADAPTER_META).map(([k, v]) => [k, v.idLabel]));
+const PROVIDER_ID_HINTS = Object.fromEntries(Object.entries(ADAPTER_META).map(([k, v]) => [k, v.idHint]));
 
 /**
  * 根据文档配置获取适配器
@@ -45,11 +39,8 @@ function getAdapter(doc) {
  */
 function getProviderConfig(config, doc) {
   const provider = (doc && doc.provider) || 'tencent';
-  switch (provider) {
-    case 'feishu': return config.feishuDocs || { appId: '', appSecret: '' };
-    case 'jinshan': return config.jinshanDocs || { appId: '', appKey: '', accessToken: '' };
-    default: return config.tencentDocs || { apiKey: '', mcpUrl: 'https://docs.qq.com/openapi/mcp' };
-  }
+  const meta = ADAPTER_META[provider] || ADAPTER_META.tencent;
+  return config[meta.configKey] || {};
 }
 
 /**
@@ -115,16 +106,26 @@ async function readSheetCsv(doc, config, state, fileId, sheetId, rowCount, colCo
 }
 
 /**
- * 写入行
+ * 初始化适配器（如获取访问令牌）
  */
-async function writeRow(doc, config, fileId, sheetId, startRow, values) {
+async function init(doc, config, state) {
   const adapter = getAdapter(doc);
   const providerConfig = getProviderConfig(config, doc);
-  return adapter.writeRow(providerConfig, fileId, sheetId, startRow, values);
+  if (adapter.init) await adapter.init(providerConfig, state);
+}
+
+/**
+ * 写入行
+ */
+async function writeRow(doc, config, state, fileId, sheetId, startRow, values) {
+  const adapter = getAdapter(doc);
+  const providerConfig = getProviderConfig(config, doc);
+  return adapter.writeRow(providerConfig, state, fileId, sheetId, startRow, values);
 }
 
 module.exports = {
   PROVIDERS,
+  ADAPTER_META,
   PROVIDER_LABELS,
   PROVIDER_ID_LABELS,
   PROVIDER_ID_HINTS,
@@ -138,5 +139,6 @@ module.exports = {
   clearCache,
   getSheetList,
   readSheetCsv,
+  init,
   writeRow
 };

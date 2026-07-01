@@ -21,7 +21,6 @@ const fs = require('fs');
 
 const { loadConfig, saveConfig, getDocumentById, getWriteDefaultDocument, validateConfig } = require('./src/config');
 const docProvider = require('./src/doc-provider');
-const tencentDocs = require('./src/tencent-docs'); // 向后兼容，部分内部函数仍需要
 const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
 const wangdian = require('./src/wangdian');
@@ -82,20 +81,21 @@ function sendJSON(res, statusCode, data) {
 
 function readBody(req) {
   return new Promise((resolve) => {
-    let body = '';
+    const chunks = [];
+    let size = 0;
     let tooLarge = false;
     req.on('data', chunk => {
-      if (tooLarge) return;
-      body += chunk;
-      if (body.length > MAX_BODY_SIZE) {
-        tooLarge = true;
-        resolve({});
-      }
+      size += chunk.length;
+      if (size > MAX_BODY_SIZE) { tooLarge = true; req.destroy(); resolve({}); return; }
+      chunks.push(chunk);
     });
     req.on('end', () => {
-      if (tooLarge) return;
-      try { resolve(JSON.parse(body)); }
-      catch { resolve({}); }
+      if (tooLarge) { resolve({}); return; }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch (e) {
+        resolve({});
+      }
     });
     req.on('error', () => resolve({}));
   });
@@ -191,12 +191,15 @@ async function handleRequest(req, res) {
   // --- 配置 API ---
   if (url.pathname === '/api/config' && req.method === 'GET') {
     const safeConfig = JSON.parse(JSON.stringify(config));
-    safeConfig.tencentDocs.apiKey = maskApiKey(safeConfig.tencentDocs.apiKey);
-    safeConfig.feishuDocs = safeConfig.feishuDocs || { appId: '', appSecret: '' };
-    safeConfig.feishuDocs.appSecret = maskApiKey(safeConfig.feishuDocs.appSecret || '');
-    safeConfig.jinshanDocs = safeConfig.jinshanDocs || { appId: '', appKey: '', accessToken: '' };
-    safeConfig.jinshanDocs.appKey = maskApiKey(safeConfig.jinshanDocs.appKey || '');
-    safeConfig.jinshanDocs.accessToken = maskApiKey(safeConfig.jinshanDocs.accessToken || '');
+    const { ADAPTER_META } = docProvider;
+    for (const meta of Object.values(ADAPTER_META)) {
+      const cfg = safeConfig[meta.configKey];
+      if (cfg) {
+        for (const f of meta.sensitiveFields) {
+          if (cfg[f]) cfg[f] = maskApiKey(cfg[f]);
+        }
+      }
+    }
     safeConfig.llm.apiKey = maskApiKey(safeConfig.llm.apiKey);
     sendJSON(res, 200, { success: true, data: safeConfig });
     return;
@@ -211,30 +214,24 @@ async function handleRequest(req, res) {
       newConfig.writeDefaultDocumentId = body.writeDefaultDocumentId || config.writeDefaultDocumentId;
       newConfig.cache = body.cache || config.cache;
 
-      if (body.tencentDocs) {
-        newConfig.tencentDocs = {
-          apiKey: (body.tencentDocs.apiKey && !body.tencentDocs.apiKey.includes('****'))
-            ? body.tencentDocs.apiKey : config.tencentDocs.apiKey,
-          mcpUrl: body.tencentDocs.mcpUrl || config.tencentDocs.mcpUrl
-        };
-      }
-
-      if (body.feishuDocs) {
-        newConfig.feishuDocs = {
-          appId: body.feishuDocs.appId || '',
-          appSecret: (body.feishuDocs.appSecret && !body.feishuDocs.appSecret.includes('****'))
-            ? body.feishuDocs.appSecret : (config.feishuDocs ? config.feishuDocs.appSecret : '')
-        };
-      }
-
-      if (body.jinshanDocs) {
-        newConfig.jinshanDocs = {
-          appId: body.jinshanDocs.appId || '',
-          appKey: (body.jinshanDocs.appKey && !body.jinshanDocs.appKey.includes('****'))
-            ? body.jinshanDocs.appKey : (config.jinshanDocs ? config.jinshanDocs.appKey : ''),
-          accessToken: (body.jinshanDocs.accessToken && !body.jinshanDocs.accessToken.includes('****'))
-            ? body.jinshanDocs.accessToken : (config.jinshanDocs ? config.jinshanDocs.accessToken : '')
-        };
+      const { ADAPTER_META } = docProvider;
+      for (const meta of Object.values(ADAPTER_META)) {
+        if (body[meta.configKey]) {
+          const existing = config[meta.configKey] || {};
+          const incoming = body[meta.configKey];
+          const merged = {};
+          // Get all unique keys
+          const allKeys = new Set([...Object.keys(existing), ...Object.keys(incoming)]);
+          for (const key of allKeys) {
+            if (meta.sensitiveFields.includes(key)) {
+              merged[key] = (incoming[key] && !String(incoming[key]).includes('****'))
+                ? incoming[key] : (existing[key] || '');
+            } else {
+              merged[key] = incoming[key] !== undefined ? incoming[key] : (existing[key] || '');
+            }
+          }
+          newConfig[meta.configKey] = merged;
+        }
       }
 
       if (body.llm) {
@@ -681,9 +678,7 @@ async function handleRequest(req, res) {
         writeDocId, sheetId, targetRow, sheet.col_count, sheet.row_count
       );
 
-      const result = await adapter.writeRow(
-        providerConfig, writeDocId, sheetId, actualRow, values
-      );
+      const result = await adapter.writeRow(providerConfig, state, writeDocId, sheetId, actualRow, values);
 
       adapter.clearCache(writeDocId);
 

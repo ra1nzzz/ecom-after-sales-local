@@ -11,44 +11,16 @@
 
 const https = require('https');
 const crypto = require('crypto');
+const { makeGetDocState, makeClearCache, MAX_COL_COUNT, REQUEST_TIMEOUT, csvEscape, csvRow } = require('./shared-docs');
 
 const BASE_HOST = 'openapi.wps.cn';
 
-// 每个请求的超时时间（毫秒）
-const REQUEST_TIMEOUT = 60000;
-
-// 按文档 ID 缓存状态（schema、缓存数据等），与 tencent-docs.js 的 docStates 模式一致
-const docStates = new Map();
-
-/**
- * 获取（或创建）指定文档的状态对象
- */
-function getDocState(fileId) {
-  if (!docStates.has(fileId)) {
-    docStates.set(fileId, {
-      schema: null,            // 缓存的字段定义：[{ field_id, field_name }]
-      schemaSheetId: null,     // schema 对应的 sheetId，切换 sheet 时需重新拉取
-      sheetId: null,           // 缓存的工作表 ID
-      cachedData: null,        // 缓存的解析后记录
-      cacheTimestamp: 0,       // 缓存时间戳
-      cacheLoading: false      // 是否正在加载中
-    });
-  }
-  return docStates.get(fileId);
-}
-
-/**
- * 清除指定文档的所有缓存（schema、数据等）
- */
-function clearCache(fileId) {
-  const state = getDocState(fileId);
+// 文档状态管理（使用共享状态工厂）
+const getDocState = makeGetDocState({ schema: null, schemaSheetId: null });
+const clearCache = makeClearCache(getDocState, (state) => {
   state.schema = null;
   state.schemaSheetId = null;
-  state.sheetId = null;
-  state.cachedData = null;
-  state.cacheTimestamp = 0;
-  state.cacheLoading = false;
-}
+});
 
 /**
  * 初始化适配器（WPS OpenAPI 无需初始化会话，此处为 no-op）
@@ -189,11 +161,16 @@ async function getSheetList(providerConfig, state, fileId) {
         return sheets;
       }
     }
-  } catch (e) {
-    // 列表接口不可用，回退到虚拟工作表
-    console.warn(`[jinshan-docs] 获取工作表列表失败，使用虚拟工作表: ${e.message}`);
+  } catch (err) {
+    // 鉴权/签名错误不应被静默吞掉
+    if (err.statusCode === 401 || err.statusCode === 403 || (err.message && err.message.includes('鉴权'))) {
+      throw new Error(`金山文档鉴权失败: ${err.message}，请检查 App ID/App Key/Access Token 配置`);
+    }
+    // 其他错误（接口不可用等）- 回退到虚拟工作表
+    console.warn('jinshan getSheetList: 接口不可用，使用虚拟工作表:', err.message);
   }
 
+  // 回退到虚拟工作表
   const dummy = [{
     sheet_id: fileId,
     sheet_name: 'Sheet1',
@@ -264,6 +241,8 @@ async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, co
   const allRecords = [];
   let pageToken = '';
   const pageSize = 500;
+  const MAX_PAGES = 200;
+  let pageCount = 0;
 
   do {
     const body = { page_size: pageSize, page_token: pageToken };
@@ -294,7 +273,9 @@ async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, co
     }
 
     pageToken = (resp.data && resp.data.page_token) || '';
-  } while (pageToken);
+    pageCount++;
+  } while (pageToken && pageCount < MAX_PAGES);
+  if (pageToken) console.warn('jinshan readSheetCsv: reached max pages, data may be incomplete');
 
   // 拼装 CSV：首行表头 + 数据行
   const lines = [];
@@ -318,8 +299,7 @@ async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, co
  * @param {Array}  values      按字段顺序排列的值数组
  * @returns {Promise<{updateNum}>}
  */
-async function writeRow(providerConfig, fileId, sheetId, startRow, values) {
-  const state = getDocState(fileId);
+async function writeRow(providerConfig, state, fileId, sheetId, startRow, values) {
   const schema = await getSchema(providerConfig, state, fileId, sheetId);
 
   // 将 values 数组按 schema 顺序映射为 { 字段名: 值 }
@@ -372,29 +352,10 @@ function recordToRow(fieldsObj, schema) {
   });
 }
 
-/**
- * 将值数组转义为 CSV 单行（逗号分隔，支持引号/换行转义）
- */
-function csvRow(cells) {
-  return cells.map(escapeCsvCell).join(',');
-}
-
-/**
- * 转义单个 CSV 单元格
- */
-function escapeCsvCell(val) {
-  const s = String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n') || s.includes('\r')) {
-    return '"' + s.replace(/"/g, '""') + '"';
-  }
-  return s;
-}
-
 module.exports = {
   init,
   getSheetList,
   readSheetCsv,
-  readSheetHeaders: readSheetCsv,
   writeRow,
   getDocState,
   clearCache,
@@ -403,6 +364,5 @@ module.exports = {
   ksoSign,
   makeRequest,
   recordToRow,
-  csvRow,
-  escapeCsvCell
+  csvRow
 };

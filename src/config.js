@@ -105,7 +105,7 @@ function getWriteDefaultDocument(config) {
 function validateConfig(config) {
   const errors = [];
   // 检查已使用的提供商的凭据
-  const usedProviders = new Set(config.documents.map(d => d.provider || 'tencent'));
+  const usedProviders = new Set((config.documents || []).map(d => d.provider || 'tencent'));
   if (usedProviders.has('tencent') && !config.tencentDocs.apiKey) {
     errors.push('腾讯文档 API Key 未配置');
   }

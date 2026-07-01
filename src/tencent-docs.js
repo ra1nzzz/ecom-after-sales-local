@@ -11,34 +11,22 @@
 
 const https = require('https');
 const {
+  makeGetDocState,
+  makeClearCache,
   MAX_COL_COUNT,
+  REQUEST_TIMEOUT,
   parseCsvLine,
   parseSheetCsv,
   searchRecords,
   fetchData: sharedFetchData
 } = require('./shared-docs');
 
-// ---- 文档状态管理 ----
-const docStates = new Map();
-
-function getDocState(fileId) {
-  if (!docStates.has(fileId)) {
-    docStates.set(fileId, {
-      mcpSessionId: null,
-      cachedData: null,
-      cacheTimestamp: 0,
-      cacheLoading: false
-    });
-  }
-  return docStates.get(fileId);
-}
-
-function clearCache(fileId) {
-  const state = getDocState(fileId);
-  state.cachedData = null;
-  state.cacheTimestamp = 0;
+// ---- 文档状态管理（使用共享状态工厂）----
+const getDocState = makeGetDocState({ mcpSessionId: null, initPromise: null });
+const clearCache = makeClearCache(getDocState, (state) => {
   state.mcpSessionId = null;
-}
+  state.initPromise = null;
+});
 
 // ---- MCP 内部通信函数（不直接导出） ----
 function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
@@ -90,7 +78,7 @@ function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
     });
 
     req.on('error', (e) => reject(new Error('请求失败: ' + e.message)));
-    req.setTimeout(60000, () => { req.destroy(); reject(new Error('请求超时')); });
+    req.setTimeout(REQUEST_TIMEOUT, () => { req.destroy(); reject(new Error('请求超时')); });
     req.write(body);
     req.end();
   });
@@ -138,16 +126,24 @@ function extractText(toolResult) {
 // providerConfig = { apiKey, mcpUrl }
 
 async function init(providerConfig, state) {
-  const { mcpUrl, apiKey } = providerConfig;
   if (state.mcpSessionId) return;
-  const { sessionId } = await callMcpApi(mcpUrl, apiKey, 'initialize', {
-    protocolVersion: '2024-11-05',
-    capabilities: {},
-    clientInfo: { name: 'kuaidi-after-sales', version: '2.0.1' }
-  }, null);
-  state.mcpSessionId = sessionId;
-  sendMcpNotification(mcpUrl, apiKey, 'notifications/initialized', {}, sessionId);
-  await new Promise(r => setTimeout(r, 500));
+  if (state.initPromise) return state.initPromise;
+  state.initPromise = (async () => {
+    try {
+      const { mcpUrl, apiKey } = providerConfig;
+      const { sessionId } = await callMcpApi(mcpUrl, apiKey, 'initialize', {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'kuaidi-after-sales', version: '2.0.1' }
+      }, null);
+      state.mcpSessionId = sessionId;
+      sendMcpNotification(mcpUrl, apiKey, 'notifications/initialized', {}, sessionId);
+      await new Promise(r => setTimeout(r, 500));
+    } finally {
+      state.initPromise = null;
+    }
+  })();
+  return state.initPromise;
 }
 
 async function getSheetList(providerConfig, state, fileId) {
@@ -240,7 +236,6 @@ module.exports = {
   init,
   getSheetList,
   readSheetCsv,
-  readSheetHeaders: readSheetCsv,
   writeRow,
   getDocState,
   clearCache,
