@@ -1014,7 +1014,8 @@
     }
 
     function showError(msg, container) {
-      const el = container || $('errorMsg');
+      const el = (typeof container === 'string') ? $(container) : (container || $('errorMsg'));
+      if (!el) return;
       el.textContent = msg;
       el.classList.add('visible');
       setTimeout(() => el.classList.remove('visible'), 8000);
