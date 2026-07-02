@@ -173,9 +173,8 @@ async function readSheetCsv(providerConfig, state, fileId, sheetId, rowCount, co
   return extractText(result);
 }
 
-async function writeRow(providerConfig, fileId, sheetId, startRow, values) {
+async function writeRow(providerConfig, state, fileId, sheetId, startRow, values) {
   const { mcpUrl, apiKey } = providerConfig;
-  const state = getDocState(fileId);
   await init(providerConfig, state);
 
   // 腾讯文档 sheet.set_range_value 接口中：
