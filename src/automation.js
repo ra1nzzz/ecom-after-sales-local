@@ -273,7 +273,9 @@ async function processMessage(message, doc, target, headersInfo) {
  * 人工审核通过：写入文档
  */
 async function approveMessage(messageId, latestConfig) {
-  const item = engine.pendingMessages.get(messageId);
+  // 兼容数字和字符串类型的 messageId（前端传字符串，Map key 是数字）
+  const id = Number(messageId);
+  const item = engine.pendingMessages.get(id) || engine.pendingMessages.get(messageId);
   if (!item) {
     return { success: false, error: '待审消息不存在' };
   }
@@ -299,12 +301,12 @@ async function approveMessage(messageId, latestConfig) {
     return { success: false, error: '写入失败: ' + writeResult.error };
   }
 
-  addProcessedId(messageId);
-  engine.pendingMessages.delete(messageId);
+  addProcessedId(id);
+  engine.pendingMessages.delete(id);
   engine.stats.totalPending = Math.max(0, engine.stats.totalPending - 1);
   engine.dirty = true;
   await persistState();
-  console.log(`[automation] 消息 #${messageId} 审核通过并写入，行: ${writeResult.row}`);
+  console.log(`[automation] 消息 #${id} 审核通过并写入，行: ${writeResult.row}`);
   return { success: true, row: writeResult.row };
 }
 
@@ -312,18 +314,20 @@ async function approveMessage(messageId, latestConfig) {
  * 人工审核拒绝
  */
 async function rejectMessage(messageId) {
-  const item = engine.pendingMessages.get(messageId);
+  // 兼容数字和字符串类型的 messageId
+  const id = Number(messageId);
+  const item = engine.pendingMessages.get(id) || engine.pendingMessages.get(messageId);
   if (!item) {
     return { success: false, error: '待审消息不存在' };
   }
 
-  engine.pendingMessages.delete(messageId);
-  addProcessedId(messageId);
+  engine.pendingMessages.delete(id);
+  addProcessedId(id);
   engine.stats.totalPending = Math.max(0, engine.stats.totalPending - 1);
   engine.stats.totalRejected++;
   engine.dirty = true;
   await persistState();
-  console.log(`[automation] 消息 #${messageId} 已拒绝`);
+  console.log(`[automation] 消息 #${id} 已拒绝`);
   return { success: true };
 }
 
