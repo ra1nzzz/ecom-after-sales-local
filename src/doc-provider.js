@@ -6,19 +6,22 @@
 const tencentDocs = require('./tencent-docs');
 const feishuDocs = require('./feishu-docs');
 const jinshanDocs = require('./jinshan-docs');
+const jinshanSkillDocs = require('./jinshan-skill-docs');
 const shared = require('./shared-docs');
 
 const PROVIDERS = {
   tencent: tencentDocs,
   feishu: feishuDocs,
-  jinshan: jinshanDocs
+  jinshan: jinshanDocs,
+  jinshan_skill: jinshanSkillDocs
 };
 
 // 适配器元数据：数据驱动的配置掩码/校验/标签
 const ADAPTER_META = {
   tencent: { configKey: 'tencentDocs', label: '腾讯文档', sensitiveFields: ['apiKey'], requiredFields: ['apiKey'], idLabel: 'File ID', idHint: '从腾讯文档URL中获取' },
   feishu: { configKey: 'feishuDocs', label: '飞书', sensitiveFields: ['appSecret'], requiredFields: ['appId'], idLabel: 'Spreadsheet Token', idHint: '从飞书表格URL获取' },
-  jinshan: { configKey: 'jinshanDocs', label: '金山文档', sensitiveFields: ['appKey', 'accessToken'], requiredFields: ['accessToken'], idLabel: 'File ID', idHint: '从金山文档URL中获取' }
+  jinshan: { configKey: 'jinshanDocs', label: '金山文档', sensitiveFields: ['appKey', 'accessToken'], requiredFields: ['accessToken'], idLabel: 'File ID', idHint: '从金山文档URL中获取' },
+  jinshan_skill: { configKey: 'jinshanSkillDocs', label: '金山文档(Skill)', sensitiveFields: ['token'], requiredFields: ['token'], idLabel: 'File ID', idHint: '从金山文档URL中获取' }
 };
 
 // 向后兼容：从 ADAPTER_META 派生

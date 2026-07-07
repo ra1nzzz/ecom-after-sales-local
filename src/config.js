@@ -21,6 +21,9 @@ const DEFAULT_CONFIG = {
     appKey: '',
     accessToken: ''
   },
+  jinshanSkillDocs: {
+    token: ''
+  },
   llm: {
     provider: 'deepseek',
     customProviderName: '',
@@ -70,6 +73,7 @@ function loadConfig() {
       if (process.env.WDT_KEY) cfg.wangdian.key = process.env.WDT_KEY;
       if (process.env.WDT_SECRET) cfg.wangdian.secret = process.env.WDT_SECRET;
       if (process.env.WDT_SALT) cfg.wangdian.salt = process.env.WDT_SALT;
+      if (process.env.KINGSOFT_DOCS_TOKEN) cfg.jinshanSkillDocs.token = process.env.KINGSOFT_DOCS_TOKEN;
       return cfg;
     }
   } catch (err) {
@@ -114,6 +118,9 @@ function validateConfig(config) {
   }
   if (usedProviders.has('jinshan') && !config.jinshanDocs.accessToken) {
     errors.push('金山文档 Access Token 未配置');
+  }
+  if (usedProviders.has('jinshan_skill') && !config.jinshanSkillDocs.token) {
+    errors.push('金山文档(Skill) Token 未配置');
   }
   if (!config.documents || config.documents.length === 0) {
     errors.push('至少需要配置一个文档');
