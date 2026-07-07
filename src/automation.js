@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const guanchen = require('./guanchen');
 const pipeline = require('./write-pipeline');
+const logger = require('./logger');
 
 const STATE_FILE = path.join(__dirname, '..', 'automation-state.json');
 const MAX_PROCESSED_IDS = 1000;
@@ -151,7 +152,17 @@ async function searchAndProcess() {
     const messages = resp.messages || [];
 
     // 过滤已处理的消息
-    const newMessages = messages.filter(m => !engine.processedIds.has(m.id));
+    let newMessages = messages.filter(m => !engine.processedIds.has(m.id));
+
+    // 过滤：要求消息内容同时带有数字
+    if (gcfg.requireDigits) {
+      const before = newMessages.length;
+      newMessages = newMessages.filter(m => /\d/.test(m.content || ''));
+      const filtered = before - newMessages.length;
+      if (filtered > 0) {
+        logger.log('auto_search', `过滤掉 ${filtered} 条不含数字的消息`, { keyword, requireDigits: true });
+      }
+    }
 
     engine.lastSearchTime = Date.now();
     engine.lastError = null;
@@ -166,6 +177,7 @@ async function searchAndProcess() {
     engine.stats.totalFound += newMessages.length;
     engine.dirty = true;
     console.log(`[automation] 发现 ${newMessages.length} 条新消息`);
+    logger.log('auto_search', `搜索到 ${newMessages.length} 条新消息`, { keyword, total: resp.total });
 
     // 解析目标文档和表格
     const targetResult = pipeline.resolveTarget(engine.config, gcfg.targetDocId, gcfg.targetId);
@@ -225,9 +237,18 @@ async function processMessage(message, doc, target, headersInfo) {
       engine.stats.totalExtractFailed++;
       engine.stats.totalFailed++;
       engine.dirty = true;
+      logger.log('auto_extract', `消息 #${messageId} 提取失败`, { error: prepareResult.error, content: content.substring(0, 100) });
       console.log(`[automation] 消息 #${messageId} 提取失败: ${prepareResult.error}`);
       return;
     }
+
+    // 记录提取结果（含ERP匹配状态）
+    logger.log('auto_extract', `消息 #${messageId} 提取完成`, {
+      method: prepareResult.debug?.method,
+      wdtMatched: !!prepareResult.debug?.wdtMatch,
+      nonEmptyCount: prepareResult.debug?.nonEmptyCount,
+      duplicate: !!prepareResult.duplicate
+    });
 
     if (engine.config.guanchen.autoConfirm) {
       // 全自动模式：直接写入
@@ -240,12 +261,14 @@ async function processMessage(message, doc, target, headersInfo) {
         if (headersInfo.parsedRows && writeResult.newRowValues) {
           headersInfo.parsedRows.push(writeResult.newRowValues);
         }
+        logger.log('auto_write', `消息 #${messageId} 自动写入成功`, { row: writeResult.row });
         console.log(`[automation] 消息 #${messageId} 已自动写入`);
       } else {
         // 写入失败 → 不加processedIds，下轮重试
         engine.stats.totalWriteFailed++;
         engine.stats.totalFailed++;
         engine.dirty = true;
+        logger.log('auto_write', `消息 #${messageId} 自动写入失败`, { error: writeResult.error });
         console.error(`[automation] 消息 #${messageId} 写入失败:`, writeResult.error);
       }
     } else {
@@ -306,6 +329,7 @@ async function approveMessage(messageId, latestConfig) {
   engine.stats.totalPending = Math.max(0, engine.stats.totalPending - 1);
   engine.dirty = true;
   await persistState();
+  logger.log('auto_approve', `消息 #${id} 审核通过并写入`, { row: writeResult.row });
   console.log(`[automation] 消息 #${id} 审核通过并写入，行: ${writeResult.row}`);
   return { success: true, row: writeResult.row };
 }
@@ -327,8 +351,74 @@ async function rejectMessage(messageId) {
   engine.stats.totalRejected++;
   engine.dirty = true;
   await persistState();
+  logger.log('auto_reject', `消息 #${id} 已拒绝`);
   console.log(`[automation] 消息 #${id} 已拒绝`);
   return { success: true };
+}
+
+/**
+ * 清空所有待审消息（标记为已拒绝）
+ */
+async function clearAllPending() {
+  const count = engine.pendingMessages.size;
+  if (count === 0) return { success: true, cleared: 0 };
+  for (const [id] of engine.pendingMessages) {
+    addProcessedId(id);
+    engine.stats.totalRejected++;
+  }
+  engine.pendingMessages.clear();
+  engine.stats.totalPending = 0;
+  engine.dirty = true;
+  await persistState();
+  logger.log('auto_clear', `清空所有待审消息`, { count });
+  console.log(`[automation] 清空 ${count} 条待审消息`);
+  return { success: true, cleared: count };
+}
+
+/**
+ * 重新识别待审消息（对单条消息重新提取）
+ */
+async function reExtractMessage(messageId, latestConfig) {
+  const id = Number(messageId);
+  const item = engine.pendingMessages.get(id) || engine.pendingMessages.get(messageId);
+  if (!item) {
+    return { success: false, error: '待审消息不存在' };
+  }
+
+  const cfg = latestConfig || engine.config;
+  const gcfg = cfg.guanchen;
+  const targetResult = pipeline.resolveTarget(cfg, gcfg.targetDocId, gcfg.targetId);
+  if (!targetResult.success) {
+    return { success: false, error: targetResult.error };
+  }
+
+  const { doc, target } = targetResult;
+  const headersInfo = await pipeline.readSheetHeaders(cfg, doc, target);
+  if (!headersInfo.success) {
+    return { success: false, error: '读取表头失败: ' + headersInfo.error };
+  }
+
+  const content = item.message.content || '';
+  const prepareResult = await pipeline.extractAndPrepare(
+    cfg, doc, target, content, headersInfo, headersInfo.parsedRows
+  );
+
+  if (!prepareResult.success) {
+    logger.log('auto_reextract', `消息 #${id} 重新识别失败`, { error: prepareResult.error });
+    return { success: false, error: '重新识别失败: ' + prepareResult.error };
+  }
+
+  // 更新待审消息的 prepareResult
+  item.prepareResult = prepareResult;
+  engine.dirty = true;
+  await persistState();
+  logger.log('auto_reextract', `消息 #${id} 重新识别完成`, {
+    method: prepareResult.debug?.method,
+    wdtMatched: !!prepareResult.debug?.wdtMatch,
+    nonEmptyCount: prepareResult.debug?.nonEmptyCount
+  });
+  console.log(`[automation] 消息 #${id} 重新识别完成`);
+  return { success: true, prepareResult };
 }
 
 /**
@@ -469,7 +559,8 @@ module.exports = {
   getStatus,
   getPendingMessages,
   searchAndProcess,
-  // approveMessage 支持传入最新配置 latestConfig 以避免使用过期 engine.config
   approveMessage,
-  rejectMessage
+  rejectMessage,
+  clearAllPending,
+  reExtractMessage
 };

@@ -42,10 +42,14 @@ const DEFAULT_CONFIG = {
     baseUrl: 'http://127.0.0.1:8742',
     enabled: false,
     keyword: '理赔',
+    requireDigits: false,
     searchInterval: 60000,
     targetDocId: '',
     targetId: '',
     autoConfirm: false
+  },
+  ui: {
+    logVisible: true
   },
   cache: {
     ttl: 300000,

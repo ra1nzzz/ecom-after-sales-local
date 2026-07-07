@@ -759,6 +759,7 @@
           <button class="btn btn-primary" id="automationToggleBtn" onclick="toggleAutomation()">启动</button>
           <button class="btn btn-secondary" onclick="testGuanchenConnection(event)">测试连接</button>
           <button class="btn btn-secondary" onclick="loadPendingMessages()">刷新待审</button>
+          <button class="btn btn-secondary" onclick="clearAllPending()">清空待审</button>
         </div>
         <div id="automationStats" style="display:none;margin-bottom:12px;padding:10px 14px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;font-size:13px;">
         </div>
@@ -766,6 +767,20 @@
         <div id="pendingMessagesContainer"></div>
       </div>
     </section>
+
+    <!-- 日志面板 -->
+    <div id="logPanel" style="position:fixed;bottom:0;right:0;width:420px;max-height:280px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px 0 0 0;z-index:900;display:none;flex-direction:column;">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:6px 12px;border-bottom:1px solid var(--border);background:var(--bg-primary);">
+        <span style="font-size:13px;font-weight:600">操作日志</span>
+        <div>
+          <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;margin-right:4px" onclick="refreshLogs()">刷新</button>
+          <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px;margin-right:4px" onclick="clearLogs()">清空</button>
+          <button class="btn btn-secondary" style="font-size:11px;padding:2px 8px" onclick="toggleLogPanel()">隐藏</button>
+        </div>
+      </div>
+      <div id="logContent" style="flex:1;overflow-y:auto;padding:4px 8px;font-size:11px;font-family:monospace;line-height:1.5;max-height:240px;">
+      </div>
+    </div>
 
     <!-- Settings View -->
     <section class="view" id="view-settings">
@@ -929,6 +944,9 @@
               <input type="text" id="cfgGuanchenInterval" placeholder="60"/>
             </div>
           </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="cfgGuanchenRequireDigits" style="width:auto;margin-right:6px"/>同时带有数字（消息内容需含数字才处理）</label>
+          </div>
           <div class="form-row">
             <div class="form-group">
               <label>目标文档</label>
@@ -944,6 +962,13 @@
           </div>
           <div class="form-group">
             <label><input type="checkbox" id="cfgGuanchenEnabled" style="width:auto;margin-right:6px"/>启动时自动运行</label>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>界面设置</h3>
+          <div class="form-group">
+            <label><input type="checkbox" id="cfgLogVisible" style="width:auto;margin-right:6px"/>显示操作日志面板（右下角）</label>
           </div>
         </div>
 
@@ -1140,6 +1165,11 @@
         loadDocSelector('writeDocSelect');
         loadAutomationStatus();
         loadPendingMessages();
+        applyLogVisibility();
+      }
+      if (viewName !== 'write' && logRefreshTimer) {
+        clearInterval(logRefreshTimer);
+        logRefreshTimer = null;
       }
     }
 
@@ -1747,10 +1777,15 @@
           $('cfgGuanchenApiKey').value = currentConfig.guanchen.apiKey || '';
           $('cfgGuanchenBaseUrl').value = currentConfig.guanchen.baseUrl || 'http://127.0.0.1:8742';
           $('cfgGuanchenKeyword').value = currentConfig.guanchen.keyword || '理赔';
+          $('cfgGuanchenRequireDigits').checked = !!currentConfig.guanchen.requireDigits;
           $('cfgGuanchenInterval').value = (currentConfig.guanchen.searchInterval || 60000) / 1000;
           $('cfgGuanchenAutoConfirm').checked = !!currentConfig.guanchen.autoConfirm;
           $('cfgGuanchenEnabled').checked = !!currentConfig.guanchen.enabled;
           renderGuanchenDocSelectors(currentConfig.guanchen.targetDocId, currentConfig.guanchen.targetId);
+        }
+
+        if (currentConfig.ui) {
+          $('cfgLogVisible').checked = currentConfig.ui.logVisible !== false;
         }
 
         renderDocList();
@@ -2034,10 +2069,14 @@
           baseUrl: $('cfgGuanchenBaseUrl').value,
           enabled: $('cfgGuanchenEnabled').checked,
           keyword: $('cfgGuanchenKeyword').value,
+          requireDigits: $('cfgGuanchenRequireDigits').checked,
           searchInterval: parseInt($('cfgGuanchenInterval').value) * 1000 || 60000,
           targetDocId: $('cfgGuanchenDoc').value,
           targetId: $('cfgGuanchenTarget').value,
           autoConfirm: $('cfgGuanchenAutoConfirm').checked
+        },
+        ui: {
+          logVisible: $('cfgLogVisible').checked
         }
       };
 
@@ -2201,14 +2240,12 @@
         '<div class="btn-row" style="margin-top:8px">' +
           '<button class="btn btn-primary" data-action="approve" data-msg-id="' + esc(String(item.id)) + '">审核通过</button>' +
           '<button class="btn btn-secondary" data-action="reject" data-msg-id="' + esc(String(item.id)) + '">拒绝</button>' +
+          '<button class="btn btn-secondary" data-action="reextract" data-msg-id="' + esc(String(item.id)) + '">重新识别</button>' +
         '</div>';
 
-      div.querySelector('[data-action="approve"]').addEventListener('click', function() {
-        approvePendingMessage(this.getAttribute('data-msg-id'));
-      });
-      div.querySelector('[data-action="reject"]').addEventListener('click', function() {
-        rejectPendingMessage(this.getAttribute('data-msg-id'));
-      });
+      div.querySelector('[data-action="approve"]').addEventListener('click', function() { approvePendingMessage(this.getAttribute('data-msg-id')); });
+      div.querySelector('[data-action="reject"]').addEventListener('click', function() { rejectPendingMessage(this.getAttribute('data-msg-id')); });
+      div.querySelector('[data-action="reextract"]').addEventListener('click', function() { reExtractPendingMessage(this.getAttribute('data-msg-id')); });
       return div;
     }
 
@@ -2298,6 +2335,95 @@
           if (t.id === selectedTargetId) opt.selected = true;
           targetSel.appendChild(opt);
         });
+      }
+    }
+
+    async function clearAllPending() {
+      if (!confirm('确定清空所有待审消息吗？此操作不可撤销。')) return;
+      try {
+        const data = await apiFetch('/api/automation/clear-pending', { method: 'POST' });
+        showToast('已清空 ' + data.cleared + ' 条待审消息');
+        loadPendingMessages();
+        loadAutomationStatus();
+      } catch (err) {
+        showToast('清空失败: ' + err.message, 'error');
+      }
+    }
+
+    async function reExtractPendingMessage(messageId) {
+      try {
+        const data = await apiFetch('/api/automation/reextract', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: String(messageId) })
+        });
+        showToast('重新识别完成');
+        loadPendingMessages();
+      } catch (err) {
+        showToast('重新识别失败: ' + err.message, 'error');
+      }
+    }
+
+    // ========== 日志面板相关函数 ==========
+
+    let logRefreshTimer = null;
+
+    function applyLogVisibility() {
+      if (currentConfig && currentConfig.ui && currentConfig.ui.logVisible !== false) {
+        $('logPanel').style.display = 'flex';
+        if (!logRefreshTimer) {
+          refreshLogs();
+          logRefreshTimer = setInterval(refreshLogs, 5000);
+        }
+      } else {
+        $('logPanel').style.display = 'none';
+        if (logRefreshTimer) { clearInterval(logRefreshTimer); logRefreshTimer = null; }
+      }
+    }
+
+    function toggleLogPanel() {
+      var panel = $('logPanel');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'flex';
+        refreshLogs();
+      } else {
+        panel.style.display = 'none';
+      }
+    }
+
+    async function refreshLogs() {
+      try {
+        const data = await apiFetch('/api/logs?limit=100');
+        var html = '';
+        var logs = data.data || [];
+        for (var i = 0; i < logs.length; i++) {
+          var l = logs[i];
+          var time = l.time ? l.time.substring(11, 19) : '';
+          var typeColor = '';
+          if (l.type && l.type.indexOf('error') >= 0) typeColor = 'color:#e74c3c';
+          else if (l.type && l.type.indexOf('write') >= 0) typeColor = 'color:#27ae60';
+          else if (l.type && l.type.indexOf('reject') >= 0 || l.type.indexOf('clear') >= 0) typeColor = 'color:#e67e22';
+          html += '<div style="padding:1px 0;border-bottom:1px solid rgba(0,0,0,0.05)">' +
+            '<span style="color:var(--text-muted)">' + esc(time) + '</span> ' +
+            '<span style="' + typeColor + '">[' + esc(l.type || '') + ']</span> ' +
+            esc(l.action || '') +
+            (l.details && Object.keys(l.details).length > 0 ? ' <span style="color:var(--text-muted)">' + esc(JSON.stringify(l.details)) + '</span>' : '') +
+            '</div>';
+        }
+        $('logContent').innerHTML = html || '<div style="color:var(--text-muted);padding:8px">暂无日志</div>';
+      } catch (err) {
+        console.error('加载日志失败:', err);
+      }
+    }
+
+    async function clearLogs() {
+      if (!confirm('确定清空所有日志吗？')) return;
+      try {
+        await apiFetch('/api/logs', { method: 'DELETE' });
+        showToast('日志已清空');
+        refreshLogs();
+      } catch (err) {
+        showToast('清空失败: ' + err.message, 'error');
       }
     }
 

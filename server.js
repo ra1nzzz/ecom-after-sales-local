@@ -27,6 +27,7 @@ const wangdian = require('./src/wangdian');
 const { autoMatchWdtOrder, mergeWdtData } = wangdian;
 const automation = require('./src/automation');
 const guanchen = require('./src/guanchen');
+const logger = require('./src/logger');
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
@@ -279,6 +280,7 @@ async function handleRequest(req, res) {
           baseUrl: body.guanchen.baseUrl || config.guanchen.baseUrl,
           enabled: body.guanchen.enabled !== undefined ? body.guanchen.enabled : config.guanchen.enabled,
           keyword: body.guanchen.keyword || config.guanchen.keyword,
+          requireDigits: body.guanchen.requireDigits !== undefined ? body.guanchen.requireDigits : (config.guanchen.requireDigits || false),
           searchInterval: body.guanchen.searchInterval || config.guanchen.searchInterval,
           targetDocId: body.guanchen.targetDocId || config.guanchen.targetDocId,
           targetId: body.guanchen.targetId || config.guanchen.targetId,
@@ -286,8 +288,15 @@ async function handleRequest(req, res) {
         };
       }
 
+      if (body.ui) {
+        newConfig.ui = {
+          logVisible: body.ui.logVisible !== undefined ? body.ui.logVisible : (config.ui ? config.ui.logVisible : true)
+        };
+      }
+
       saveConfig(newConfig);
       config = loadConfig();
+      logger.log('config_save', '配置已保存', { hasGuanchen: !!config.guanchen, hasWangdian: !!(config.wangdian && config.wangdian.sid) });
       for (const doc of config.documents) {
         docProvider.clearCache(doc, doc.fileId);
       }
@@ -728,6 +737,11 @@ async function handleRequest(req, res) {
 
       adapter.clearCache(writeDocId);
 
+      logger.log('manual_write', `手动登记成功`, {
+        doc: doc.name, row: actualRow, isDuplicate: !!isDuplicate,
+        fields: values.filter(v => v && String(v).trim()).length
+      });
+
       sendJSON(res, 200, {
         success: true,
         message: `登记成功，更新了 ${result.updateNum} 个单元格`,
@@ -840,6 +854,52 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // --- 观尘自动化：清空待审 ---
+  if (url.pathname === '/api/automation/clear-pending' && req.method === 'POST') {
+    try {
+      const result = await automation.clearAllPending();
+      sendJSON(res, 200, { success: true, cleared: result.cleared });
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
+  // --- 观尘自动化：重新识别 ---
+  if (url.pathname === '/api/automation/reextract' && req.method === 'POST') {
+    const body = await readBody(req);
+    const messageId = body.messageId;
+    if (messageId === undefined || messageId === null) {
+      sendJSON(res, 400, { success: false, error: '缺少 messageId' });
+      return;
+    }
+    try {
+      const result = await automation.reExtractMessage(messageId, config);
+      if (result.success) {
+        sendJSON(res, 200, { success: true, message: '重新识别完成', prepareResult: result.prepareResult });
+      } else {
+        sendJSON(res, 400, { success: false, error: result.error });
+      }
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
+  // --- 日志 API ---
+  if (url.pathname === '/api/logs' && req.method === 'GET') {
+    const limit = parseInt(url.searchParams.get('limit')) || 200;
+    const type = url.searchParams.get('type') || '';
+    sendJSON(res, 200, { success: true, data: logger.getLogs({ limit, type }) });
+    return;
+  }
+
+  if (url.pathname === '/api/logs' && req.method === 'DELETE') {
+    logger.clearLogs();
+    sendJSON(res, 200, { success: true, message: '日志已清空' });
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not Found');
   } catch (err) {
@@ -868,6 +928,10 @@ server.listen(PORT, HOST, async () => {
 
   // 初始化观尘自动化引擎
   automation.init(config);
+
+  // 初始化日志系统
+  logger.init();
+  logger.log('system', '服务器启动', { port: PORT });
 
   console.log('========================================');
   console.log('  综合电商售后处理系统 v2');

@@ -6,7 +6,7 @@
 
 const docProvider = require('./doc-provider');
 const { extractRowData } = require('./extractor');
-const { autoMatchWdtOrder, mergeWdtData } = require('./wangdian');
+const { autoMatchWdtOrder, mergeWdtData, queryOrder, queryWarehouse } = require('./wangdian');
 const { getDocumentById } = require('./config');
 const { parseCsvLine } = require('./shared-docs');
 
@@ -167,8 +167,34 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     wdtEnabled ? autoMatchWdtOrder(wdtCfg, description) : Promise.resolve(null)
   ]);
 
-  if (wdtMatch) {
-    mergeWdtData(headers, extractResult, wdtMatch);
+  // ERP优先：如果autoMatchWdtOrder未命中，但LLM提取到了物流单号，用该单号直接查询ERP
+  let finalWdtMatch = wdtMatch;
+  if (!finalWdtMatch && wdtEnabled) {
+    const logisticsColIdx = headers.findIndex(h => {
+      const name = (h || '').trim();
+      return name === '快递单号' || name === '物流单号';
+    });
+    if (logisticsColIdx >= 0) {
+      const extractedNo = (extractResult.values[logisticsColIdx] || '').trim();
+      if (extractedNo && /\d/.test(extractedNo)) {
+        try {
+          const wdtResult = await queryOrder(wdtCfg, extractedNo);
+          if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
+            finalWdtMatch = wdtResult.orders[0];
+            if (finalWdtMatch.warehouse_no) {
+              finalWdtMatch.warehouse_name = await queryWarehouse(wdtCfg, finalWdtMatch.warehouse_no);
+            }
+            console.log(`[pipeline] LLM提取的物流单号 ${extractedNo} ERP匹配成功`);
+          }
+        } catch (e) {
+          console.log(`[pipeline] LLM提取的物流单号 ${extractedNo} ERP未匹配: ${e.message}`);
+        }
+      }
+    }
+  }
+
+  if (finalWdtMatch) {
+    mergeWdtData(headers, extractResult, finalWdtMatch);
   }
 
   if (extractResult.nonEmptyCount === 0) {
@@ -208,7 +234,7 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     debug: {
       method: extractResult.method,
       nonEmptyCount: extractResult.nonEmptyCount,
-      wdtMatch: wdtMatch ? { shop_name: wdtMatch.shop_name, logistics_no: wdtMatch.logistics_no } : null
+      wdtMatch: finalWdtMatch ? { shop_name: finalWdtMatch.shop_name, logistics_no: finalWdtMatch.logistics_no } : null
     }
   };
 }
