@@ -751,6 +751,20 @@
           <button class="btn btn-secondary" onclick="cancelWrite()">取消</button>
         </div>
       </div>
+
+      <!-- 观尘自动化卡片 -->
+      <div class="card" id="automationCard">
+        <h2 class="card-title">观尘自动化登记</h2>
+        <div class="btn-row" style="margin-bottom:12px">
+          <button class="btn btn-primary" id="automationToggleBtn" onclick="toggleAutomation()">启动</button>
+          <button class="btn btn-secondary" onclick="testGuanchenConnection(event)">测试连接</button>
+          <button class="btn btn-secondary" onclick="loadPendingMessages()">刷新待审</button>
+        </div>
+        <div id="automationStats" style="display:none;margin-bottom:12px;padding:10px 14px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;font-size:13px;">
+        </div>
+        <div id="automationError" class="error-box" style="display:none"></div>
+        <div id="pendingMessagesContainer"></div>
+      </div>
     </section>
 
     <!-- Settings View -->
@@ -892,6 +906,44 @@
               <label>自动刷新间隔（秒）</label>
               <input type="text" id="cfgCacheRefresh" placeholder="1800"/>
             </div>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3>观尘API自动化配置</h3>
+          <div class="form-group">
+            <label>API Key</label>
+            <input type="password" id="cfgGuanchenApiKey" placeholder="观尘API Key"/>
+          </div>
+          <div class="form-group">
+            <label>Base URL</label>
+            <input type="url" id="cfgGuanchenBaseUrl" placeholder="http://127.0.0.1:8742"/>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>搜索关键词</label>
+              <input type="text" id="cfgGuanchenKeyword" placeholder="理赔"/>
+            </div>
+            <div class="form-group">
+              <label>搜索间隔（秒）</label>
+              <input type="text" id="cfgGuanchenInterval" placeholder="60"/>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>目标文档</label>
+              <select id="cfgGuanchenDoc" onchange="onGuanchenTargetDocChange()"></select>
+            </div>
+            <div class="form-group">
+              <label>目标表格</label>
+              <select id="cfgGuanchenTarget"></select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="cfgGuanchenAutoConfirm" style="width:auto;margin-right:6px"/>自动确认（无需人工审核直接写入）</label>
+          </div>
+          <div class="form-group">
+            <label><input type="checkbox" id="cfgGuanchenEnabled" style="width:auto;margin-right:6px"/>启动时自动运行</label>
           </div>
         </div>
 
@@ -1084,7 +1136,11 @@
 
       if (viewName === 'settings') showSettingsPasswordGate();
       if (viewName === 'query') loadDocSelector('queryDocSelect');
-      if (viewName === 'write') loadDocSelector('writeDocSelect');
+      if (viewName === 'write') {
+        loadDocSelector('writeDocSelect');
+        loadAutomationStatus();
+        loadPendingMessages();
+      }
     }
 
     async function loadDocSelector(selectId) {
@@ -1687,6 +1743,16 @@
         $('cfgCacheTtl').value = (currentConfig.cache.ttl || 300000) / 1000;
         $('cfgCacheRefresh').value = (currentConfig.cache.autoRefreshInterval || 1800000) / 1000;
 
+        if (currentConfig.guanchen) {
+          $('cfgGuanchenApiKey').value = currentConfig.guanchen.apiKey || '';
+          $('cfgGuanchenBaseUrl').value = currentConfig.guanchen.baseUrl || 'http://127.0.0.1:8742';
+          $('cfgGuanchenKeyword').value = currentConfig.guanchen.keyword || '理赔';
+          $('cfgGuanchenInterval').value = (currentConfig.guanchen.searchInterval || 60000) / 1000;
+          $('cfgGuanchenAutoConfirm').checked = !!currentConfig.guanchen.autoConfirm;
+          $('cfgGuanchenEnabled').checked = !!currentConfig.guanchen.enabled;
+          renderGuanchenDocSelectors(currentConfig.guanchen.targetDocId, currentConfig.guanchen.targetId);
+        }
+
         renderDocList();
         renderDefaultDocSelectors();
       } catch (err) {
@@ -1962,6 +2028,16 @@
         cache: {
           ttl: parseInt($('cfgCacheTtl').value) * 1000 || 300000,
           autoRefreshInterval: parseInt($('cfgCacheRefresh').value) * 1000 || 1800000
+        },
+        guanchen: {
+          apiKey: $('cfgGuanchenApiKey').value,
+          baseUrl: $('cfgGuanchenBaseUrl').value,
+          enabled: $('cfgGuanchenEnabled').checked,
+          keyword: $('cfgGuanchenKeyword').value,
+          searchInterval: parseInt($('cfgGuanchenInterval').value) * 1000 || 60000,
+          targetDocId: $('cfgGuanchenDoc').value,
+          targetId: $('cfgGuanchenTarget').value,
+          autoConfirm: $('cfgGuanchenAutoConfirm').checked
         }
       };
 
@@ -1981,6 +2057,247 @@
         }
       } catch (err) {
         showToast('保存失败: ' + err.message, 'error');
+      }
+    }
+
+    // ========== 观尘自动化相关函数 ==========
+
+    async function apiFetch(url, options) {
+      const resp = await fetch(url, options);
+      if (!resp.ok) {
+        let msg = '请求失败(' + resp.status + ')';
+        try { const d = await resp.json(); if (d.error) msg = d.error; } catch(e) {}
+        throw new Error(msg);
+      }
+      return resp.json();
+    }
+
+    let automationStatusTimer = null;
+
+    async function toggleAutomation() {
+      const btn = $('automationToggleBtn');
+      try {
+        const statusData = await apiFetch('/api/automation/status');
+        const isRunning = statusData.success && statusData.data.running;
+
+        if (isRunning) {
+          const data = await apiFetch('/api/automation/stop', { method: 'POST' });
+          if (data.success) {
+            btn.textContent = '启动';
+            btn.classList.remove('btn-secondary');
+            btn.classList.add('btn-primary');
+            showToast('自动化引擎已停止');
+            if (automationStatusTimer) { clearInterval(automationStatusTimer); automationStatusTimer = null; }
+          }
+        } else {
+          const data = await apiFetch('/api/automation/start', { method: 'POST' });
+          if (data.success) {
+            btn.textContent = '停止';
+            btn.classList.remove('btn-primary');
+            btn.classList.add('btn-secondary');
+            showToast(data.message || '自动化引擎已启动');
+            loadAutomationStatus();
+            if (!automationStatusTimer) {
+              automationStatusTimer = setInterval(loadAutomationStatus, 10000);
+            }
+          } else {
+            showToast(data.error || '启动失败', 'error');
+          }
+        }
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    async function loadAutomationStatus() {
+      try {
+        const data = await apiFetch('/api/automation/status');
+        if (!data.success) return;
+        const s = data.data;
+
+        const btn = $('automationToggleBtn');
+        if (s.running) {
+          btn.textContent = '停止';
+          btn.classList.remove('btn-primary');
+          btn.classList.add('btn-secondary');
+          loadPendingMessages();
+        } else {
+          btn.textContent = '启动';
+          btn.classList.remove('btn-secondary');
+          btn.classList.add('btn-primary');
+        }
+
+        const statsEl = $('automationStats');
+        const lastTime = s.lastSearchTime ? new Date(s.lastSearchTime).toLocaleTimeString() : '尚未搜索';
+        statsEl.style.display = 'block';
+        statsEl.innerHTML =
+          '<span style="color:var(--text-muted)">最后搜索:</span> ' + esc(lastTime) +
+          ' | <span style="color:var(--text-muted)">发现:</span> ' + s.stats.totalFound +
+          ' | <span style="color:var(--text-muted)">已写入:</span> ' + s.stats.totalAutoWritten +
+          ' | <span style="color:var(--text-muted)">待审:</span> ' + s.pendingCount +
+          ' | <span style="color:var(--text-muted)">已拒绝:</span> ' + s.stats.totalRejected +
+          ' | <span style="color:var(--text-muted)">失败:</span> ' + s.stats.totalFailed;
+
+        const errEl = $('automationError');
+        if (s.lastError) {
+          errEl.textContent = '错误: ' + s.lastError;
+          errEl.style.display = 'block';
+        } else {
+          errEl.style.display = 'none';
+        }
+      } catch (err) {
+        console.error('加载自动化状态失败:', err);
+      }
+    }
+
+    async function loadPendingMessages() {
+      try {
+        const data = await apiFetch('/api/automation/pending');
+        if (!data.success) return;
+        const container = $('pendingMessagesContainer');
+        const messages = data.data || [];
+        if (messages.length === 0) {
+          container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">暂无待审消息</p>';
+          return;
+        }
+        container.innerHTML = '';
+        messages.forEach(item => {
+          container.appendChild(renderPendingMessage(item));
+        });
+      } catch (err) {
+        console.error('加载待审消息失败:', err);
+      }
+    }
+
+    function renderPendingMessage(item) {
+      const div = document.createElement('div');
+      div.className = 'card';
+      div.style.marginTop = '10px';
+
+      const msg = item.message || {};
+      var ts = msg.msg_time;
+      var msgTime = ts ? new Date(ts > 1e12 ? ts : ts * 1000).toLocaleString() : '';
+      const sender = esc(msg.sender_name || msg.sender_wxid || '未知');
+      const content = esc(msg.content || '');
+
+      let previewTable = '';
+      const pr = item.prepareResult;
+      if (pr && pr.success && pr.headers && pr.values) {
+        const rows = pr.headers.map((h, i) =>
+          '<tr><td style="padding:2px 8px;color:var(--text-muted);font-size:12px">' + esc(h) + '</td>' +
+          '<td style="padding:2px 8px;font-size:12px">' + esc(pr.values[i] || '') + '</td></tr>'
+        ).join('');
+        previewTable = '<table style="margin-top:6px;border-collapse:collapse"><tbody>' + rows + '</tbody></table>';
+      }
+
+      div.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:start">' +
+          '<div style="flex:1">' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + sender + ' · ' + msgTime + '</div>' +
+            '<div style="font-size:13px;margin-bottom:4px;white-space:pre-wrap;word-break:break-all">' + content + '</div>' +
+            previewTable +
+          '</div>' +
+        '</div>' +
+        '<div class="btn-row" style="margin-top:8px">' +
+          '<button class="btn btn-primary" data-action="approve" data-msg-id="' + esc(String(item.id)) + '">审核通过</button>' +
+          '<button class="btn btn-secondary" data-action="reject" data-msg-id="' + esc(String(item.id)) + '">拒绝</button>' +
+        '</div>';
+
+      div.querySelector('[data-action="approve"]').addEventListener('click', function() {
+        approvePendingMessage(this.getAttribute('data-msg-id'));
+      });
+      div.querySelector('[data-action="reject"]').addEventListener('click', function() {
+        rejectPendingMessage(this.getAttribute('data-msg-id'));
+      });
+      return div;
+    }
+
+    async function approvePendingMessage(messageId) {
+      try {
+        const data = await apiFetch('/api/automation/approve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId })
+        });
+        if (data.success) {
+          showToast('已写入文档，行: ' + data.row);
+          loadPendingMessages();
+          loadAutomationStatus();
+        } else {
+          showToast(data.error || '写入失败', 'error');
+        }
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    async function rejectPendingMessage(messageId) {
+      try {
+        const data = await apiFetch('/api/automation/reject', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId })
+        });
+        if (data.success) {
+          showToast('已拒绝');
+          loadPendingMessages();
+          loadAutomationStatus();
+        } else {
+          showToast(data.error || '操作失败', 'error');
+        }
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    async function testGuanchenConnection(evt) {
+      const btn = evt ? evt.target : null;
+      if (btn) { btn.disabled = true; btn.textContent = '测试中...'; }
+      try {
+        const data = await apiFetch('/api/automation/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({})
+        });
+        if (data.success) {
+          showToast(data.message || '连接成功');
+        } else {
+          showToast(data.message || data.error || '连接失败', 'error');
+        }
+      } catch (err) {
+        showToast('测试失败: ' + err.message, 'error');
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '测试连接'; }
+      }
+    }
+
+    function renderGuanchenDocSelectors(selectedDocId, selectedTargetId) {
+      const docs = currentConfig.documents || [];
+      const docSel = $('cfgGuanchenDoc');
+      docSel.innerHTML = '<option value="">-- 请选择 --</option>';
+      docs.forEach(doc => {
+        const opt = document.createElement('option');
+        opt.value = doc.id;
+        opt.textContent = doc.name;
+        if (doc.id === selectedDocId) opt.selected = true;
+        docSel.appendChild(opt);
+      });
+      onGuanchenTargetDocChange(selectedTargetId);
+    }
+
+    function onGuanchenTargetDocChange(selectedTargetId) {
+      const docId = $('cfgGuanchenDoc').value;
+      const doc = (currentConfig.documents || []).find(d => d.id === docId);
+      const targetSel = $('cfgGuanchenTarget');
+      targetSel.innerHTML = '<option value="">-- 请选择 --</option>';
+      if (doc && doc.writeTargets) {
+        doc.writeTargets.forEach(t => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = t.name;
+          if (t.id === selectedTargetId) opt.selected = true;
+          targetSel.appendChild(opt);
+        });
       }
     }
 

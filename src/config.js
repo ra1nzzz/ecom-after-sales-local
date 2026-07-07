@@ -37,6 +37,16 @@ const DEFAULT_CONFIG = {
     secret: '',
     salt: ''
   },
+  guanchen: {
+    apiKey: '',
+    baseUrl: 'http://127.0.0.1:8742',
+    enabled: false,
+    keyword: '理赔',
+    searchInterval: 60000,
+    targetDocId: '',
+    targetId: '',
+    autoConfirm: false
+  },
   cache: {
     ttl: 300000,
     autoRefreshInterval: 1800000
@@ -74,6 +84,7 @@ function loadConfig() {
       if (process.env.WDT_SECRET) cfg.wangdian.secret = process.env.WDT_SECRET;
       if (process.env.WDT_SALT) cfg.wangdian.salt = process.env.WDT_SALT;
       if (process.env.KINGSOFT_DOCS_TOKEN) cfg.jinshanSkillDocs.token = process.env.KINGSOFT_DOCS_TOKEN;
+      if (process.env.GUANCHEN_API_KEY) cfg.guanchen.apiKey = process.env.GUANCHEN_API_KEY;
       return cfg;
     }
   } catch (err) {

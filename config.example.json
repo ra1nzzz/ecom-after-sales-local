@@ -47,6 +47,9 @@
     "appKey": "YOUR_JINSHAN_APP_KEY",
     "accessToken": "YOUR_JINSHAN_ACCESS_TOKEN"
   },
+  "jinshanSkillDocs": {
+    "token": "YOUR_JINSHAN_SKILL_TOKEN"
+  },
   "llm": {
     "provider": "deepseek",
     "customProviderName": "",
@@ -59,6 +62,16 @@
     "key": "",
     "secret": "",
     "salt": ""
+  },
+  "guanchen": {
+    "apiKey": "YOUR_GUANCHEN_API_KEY",
+    "baseUrl": "http://127.0.0.1:8742",
+    "enabled": false,
+    "keyword": "理赔",
+    "searchInterval": 60000,
+    "targetDocId": "",
+    "targetId": "",
+    "autoConfirm": false
   },
   "cache": {
     "ttl": 300000,

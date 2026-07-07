@@ -25,6 +25,8 @@ const { testConnection: testLLMConnection } = require('./src/llm');
 const { extractRowData, buildPreviewText } = require('./src/extractor');
 const wangdian = require('./src/wangdian');
 const { autoMatchWdtOrder, mergeWdtData } = wangdian;
+const automation = require('./src/automation');
+const guanchen = require('./src/guanchen');
 
 const PORT = 3000;
 const HOST = '0.0.0.0';
@@ -222,6 +224,9 @@ async function handleRequest(req, res) {
       }
     }
     safeConfig.llm.apiKey = maskApiKey(safeConfig.llm.apiKey);
+    if (safeConfig.guanchen && safeConfig.guanchen.apiKey) {
+      safeConfig.guanchen.apiKey = maskApiKey(safeConfig.guanchen.apiKey);
+    }
     sendJSON(res, 200, { success: true, data: safeConfig });
     return;
   }
@@ -264,6 +269,20 @@ async function handleRequest(req, res) {
             ? body.llm.apiKey : config.llm.apiKey,
           baseUrl: body.llm.baseUrl || config.llm.baseUrl,
           model: body.llm.model || config.llm.model
+        };
+      }
+
+      if (body.guanchen) {
+        newConfig.guanchen = {
+          apiKey: (body.guanchen.apiKey && !String(body.guanchen.apiKey).includes('****'))
+            ? body.guanchen.apiKey : (config.guanchen.apiKey || ''),
+          baseUrl: body.guanchen.baseUrl || config.guanchen.baseUrl,
+          enabled: body.guanchen.enabled !== undefined ? body.guanchen.enabled : config.guanchen.enabled,
+          keyword: body.guanchen.keyword || config.guanchen.keyword,
+          searchInterval: body.guanchen.searchInterval || config.guanchen.searchInterval,
+          targetDocId: body.guanchen.targetDocId || config.guanchen.targetDocId,
+          targetId: body.guanchen.targetId || config.guanchen.targetId,
+          autoConfirm: body.guanchen.autoConfirm !== undefined ? body.guanchen.autoConfirm : config.guanchen.autoConfirm
         };
       }
 
@@ -733,6 +752,94 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // --- 观尘自动化：获取状态 ---
+  if (url.pathname === '/api/automation/status' && req.method === 'GET') {
+    sendJSON(res, 200, { success: true, data: automation.getStatus() });
+    return;
+  }
+
+  // --- 观尘自动化：启动引擎 ---
+  if (url.pathname === '/api/automation/start' && req.method === 'POST') {
+    try {
+      const started = automation.start(config);
+      if (started) {
+        sendJSON(res, 200, { success: true, message: '自动化引擎已启动' });
+      } else {
+        sendJSON(res, 200, { success: true, message: '引擎已在运行中，如需应用新配置请先停止再启动' });
+      }
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
+  // --- 观尘自动化：停止引擎 ---
+  if (url.pathname === '/api/automation/stop' && req.method === 'POST') {
+    automation.stop();
+    sendJSON(res, 200, { success: true, message: '自动化引擎已停止' });
+    return;
+  }
+
+  // --- 观尘自动化：获取待审消息 ---
+  if (url.pathname === '/api/automation/pending' && req.method === 'GET') {
+    sendJSON(res, 200, { success: true, data: automation.getPendingMessages() });
+    return;
+  }
+
+  // --- 观尘自动化：审核通过 ---
+  if (url.pathname === '/api/automation/approve' && req.method === 'POST') {
+    const body = await readBody(req);
+    const messageId = body.messageId;
+    if (messageId === undefined || messageId === null) {
+      sendJSON(res, 400, { success: false, error: '缺少 messageId' });
+      return;
+    }
+    try {
+      const result = await automation.approveMessage(messageId, config);
+      if (result.success) {
+        sendJSON(res, 200, { success: true, message: '已写入文档', row: result.row });
+      } else {
+        sendJSON(res, 400, { success: false, error: result.error });
+      }
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
+  // --- 观尘自动化：审核拒绝 ---
+  if (url.pathname === '/api/automation/reject' && req.method === 'POST') {
+    const body = await readBody(req);
+    const messageId = body.messageId;
+    if (messageId === undefined || messageId === null) {
+      sendJSON(res, 400, { success: false, error: '缺少 messageId' });
+      return;
+    }
+    const result = await automation.rejectMessage(messageId);
+    if (result.success) {
+      sendJSON(res, 200, { success: true, message: '已拒绝' });
+    } else {
+      sendJSON(res, 400, { success: false, error: result.error });
+    }
+    return;
+  }
+
+  // --- 观尘自动化：测试连接 ---
+  if (url.pathname === '/api/automation/test' && req.method === 'POST') {
+    const body = await readBody(req);
+    const testConfig = { ...config.guanchen, ...(body.guanchenConfig || {}) };
+    if (testConfig.apiKey && String(testConfig.apiKey).includes('****')) {
+      testConfig.apiKey = config.guanchen.apiKey;
+    }
+    try {
+      const result = await guanchen.testConnection(testConfig);
+      sendJSON(res, 200, { success: result.success !== undefined ? result.success : result.ok, message: result.message });
+    } catch (err) {
+      sendJSON(res, 500, { success: false, message: err.message });
+    }
+    return;
+  }
+
   res.writeHead(404);
   res.end('Not Found');
   } catch (err) {
@@ -758,6 +865,9 @@ server.listen(PORT, HOST, async () => {
     }
     if (lanIp) break;
   }
+
+  // 初始化观尘自动化引擎
+  automation.init(config);
 
   console.log('========================================');
   console.log('  综合电商售后处理系统 v2');
