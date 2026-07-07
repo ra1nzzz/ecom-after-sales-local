@@ -76,10 +76,47 @@ async function getChats(guanchenConfig) {
 
 /**
  * 按关键词搜索消息
+ * 观尘API要求指定chat_wxid才能返回消息，不传则返回空。
+ * 此函数自动获取所有授权群聊，逐个搜索后合并结果并按时间倒序排序。
  * @returns {Promise<{total, limit, offset, messages: Array}>}
  */
 async function searchMessages(guanchenConfig, keyword, limit = 50) {
-  return callGet(guanchenConfig.baseUrl, '/openapi/messages', guanchenConfig.apiKey, { keyword, limit });
+  // 先获取所有授权群聊
+  const chatsResp = await getChats(guanchenConfig);
+  const chats = chatsResp.chats || [];
+  if (chats.length === 0) {
+    return { total: 0, limit, offset: 0, messages: [] };
+  }
+
+  // 对每个群聊搜索消息
+  const searchPromises = chats.map(chat => {
+    const wxid = chat.wxid || chat.chat_wxid;
+    if (!wxid) return Promise.resolve({ messages: [] });
+    return callGet(guanchenConfig.baseUrl, '/openapi/messages', guanchenConfig.apiKey, {
+      chat_wxid: wxid,
+      keyword,
+      limit
+    }).catch(err => {
+      console.error(`[guanchen] 搜索群聊 ${wxid} 失败:`, err.message);
+      return { messages: [] };
+    });
+  });
+
+  const results = await Promise.all(searchPromises);
+
+  // 合并所有群聊的消息并按 msg_time 倒序排序
+  const allMessages = [];
+  for (const r of results) {
+    if (r.messages && Array.isArray(r.messages)) {
+      allMessages.push(...r.messages);
+    }
+  }
+  allMessages.sort((a, b) => (b.msg_time || 0) - (a.msg_time || 0));
+
+  // 截取前 limit 条
+  const topMessages = allMessages.slice(0, limit);
+
+  return { total: allMessages.length, limit, offset: 0, messages: topMessages };
 }
 
 /**
