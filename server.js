@@ -657,7 +657,7 @@ async function handleRequest(req, res) {
   // --- 写入：执行写入 ---
   if (url.pathname === '/api/write/execute' && req.method === 'POST') {
     const body = await readBody(req);
-    const { docId, targetFileId, sheetId, targetRow, values } = body;
+    const { docId, targetFileId, sheetId, targetRow, values, isDuplicate } = body;
 
     const doc = getDocumentById(config, docId || config.writeDefaultDocumentId);
     if (!doc) {
@@ -693,11 +693,17 @@ async function handleRequest(req, res) {
         return;
       }
 
-      // 执行写入前重新查找第一个空行，确保追加到已有内容的下一行
-      const actualRow = await findNextEmptyRow(
-        doc, state,
-        writeDocId, sheetId, targetRow, sheet.col_count, sheet.row_count
-      );
+      // 查重命中时直接使用已有行号更新，不重新查找空行
+      // 非查重场景才查找空行用于追加
+      let actualRow;
+      if (isDuplicate) {
+        actualRow = targetRow;
+      } else {
+        actualRow = await findNextEmptyRow(
+          doc, state,
+          writeDocId, sheetId, targetRow, sheet.col_count, sheet.row_count
+        );
+      }
 
       const result = await adapter.writeRow(providerConfig, state, writeDocId, sheetId, actualRow, values);
 

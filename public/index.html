@@ -1557,7 +1557,8 @@
             targetFileId: writePreviewData.targetFileId,
             sheetId: writePreviewData.sheetId,
             targetRow: writePreviewData.targetRow,
-            values: writePreviewData.values
+            values: writePreviewData.values,
+            isDuplicate: !!writePreviewData.duplicate
           })
         });
         const data = await resp.json();
