@@ -3,3 +3,5 @@ config.json
 .env
 automation-state.json
 automation-logs.json
+watchdog.log
+watchdog.old.log
