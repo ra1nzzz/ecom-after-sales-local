@@ -967,4 +967,20 @@ server.listen(PORT, HOST, async () => {
       });
     }, config.cache.autoRefreshInterval);
   }
+
+  // 优雅关闭：收到 SIGINT/SIGTERM 时持久化状态和日志
+  async function gracefulShutdown(signal) {
+    console.log(`\n[server] 收到 ${signal}，正在优雅关闭...`);
+    try {
+      await automation.shutdown();
+      logger.log('system', '服务器关闭', { signal });
+      logger.shutdown();
+    } catch (err) {
+      console.error('[server] 优雅关闭出错:', err.message);
+    }
+    process.exit(0);
+  }
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 });

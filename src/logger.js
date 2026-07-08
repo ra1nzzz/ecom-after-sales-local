@@ -20,8 +20,8 @@ let flushTimer = null;
 function init() {
   loadLogs();
   cleanExpired();
-  // 每5分钟落盘一次（如果有变化）
-  flushTimer = setInterval(flush, 5 * 60 * 1000);
+  // 每30秒落盘一次（如果有变化）
+  flushTimer = setInterval(flush, 30 * 1000);
   console.log(`[logger] 初始化完成，当前 ${logs.length} 条日志`);
 }
 

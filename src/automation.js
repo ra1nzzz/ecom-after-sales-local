@@ -169,7 +169,15 @@ async function searchAndProcess() {
 
     if (newMessages.length === 0) {
       console.log(`[automation] 无新消息（已处理 ${engine.processedIds.size} 条）`);
-      // 无新消息：仅更新内存中的lastSearchTime，不设dirty
+      // 心跳日志：即使无新消息也记录搜索行为，证明引擎在运转
+      logger.log('auto_search', `搜索完成，无新消息`, {
+        keyword,
+        total: resp.total,
+        processed: engine.processedIds.size,
+        requireDigits: !!gcfg.requireDigits
+      });
+      // 强制持久化 lastSearchTime（绕过dirty检查）
+      engine.dirty = true;
       await persistState();
       return;
     }
@@ -552,6 +560,17 @@ function cleanExpiredPending() {
   }
 }
 
+/**
+ * 优雅关闭：停止引擎并持久化状态
+ */
+async function shutdown() {
+  console.log('[automation] 正在优雅关闭...');
+  stop();
+  engine.dirty = true;
+  await persistState();
+  console.log('[automation] 状态已持久化');
+}
+
 module.exports = {
   init,
   start,
@@ -562,5 +581,6 @@ module.exports = {
   approveMessage,
   rejectMessage,
   clearAllPending,
-  reExtractMessage
+  reExtractMessage,
+  shutdown
 };
