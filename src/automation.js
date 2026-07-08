@@ -268,11 +268,16 @@ async function processMessage(message, doc, target, headersInfo) {
       method: prepareResult.debug?.method,
       wdtMatched: !!prepareResult.debug?.wdtMatch,
       nonEmptyCount: prepareResult.debug?.nonEmptyCount,
-      duplicate: !!prepareResult.duplicate
+      duplicate: !!prepareResult.duplicate,
+      qualityIssues: prepareResult.qualityIssues || []
     });
 
-    if (engine.config.guanchen.autoConfirm) {
-      // 全自动模式：直接写入
+    // 质量门禁：autoConfirm模式下，有质量问题的消息转入待审而非自动写入
+    const qualityIssues = prepareResult.qualityIssues || [];
+    const hasQualityIssue = qualityIssues.length > 0;
+
+    if (engine.config.guanchen.autoConfirm && !hasQualityIssue) {
+      // 全自动模式 + 质量检查通过：直接写入
       const writeResult = await pipeline.executeWrite(engine.config, doc, prepareResult, headersInfo);
       if (writeResult.success) {
         addProcessedId(messageId);
@@ -293,7 +298,7 @@ async function processMessage(message, doc, target, headersInfo) {
         console.error(`[automation] 消息 #${messageId} 写入失败:`, writeResult.error);
       }
     } else {
-      // 半自动模式：加入待审队列
+      // 半自动模式 或 质量检查未通过：加入待审队列
       engine.pendingMessages.set(messageId, {
         message,
         prepareResult,
@@ -301,7 +306,15 @@ async function processMessage(message, doc, target, headersInfo) {
       });
       engine.stats.totalPending++;
       engine.dirty = true;
-      console.log(`[automation] 消息 #${messageId} 已加入待审队列`);
+      if (hasQualityIssue) {
+        logger.log('auto_extract', `消息 #${messageId} 质量检查未通过，转入待审`, {
+          qualityIssues,
+          wdtMatched: !!prepareResult.wdtMatched
+        });
+        console.log(`[automation] 消息 #${messageId} 质量检查未通过: ${qualityIssues.join(', ')}`);
+      } else {
+        console.log(`[automation] 消息 #${messageId} 已加入待审队列`);
+      }
     }
   } catch (err) {
     // 提取过程异常 → 标记为已处理

@@ -201,6 +201,55 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     return { success: false, error: '未能从描述中提取到任何有效数据' };
   }
 
+  // ========== 质量检查 ==========
+  const qualityIssues = [];
+
+  // 检查1: ERP是否匹配
+  const wdtMatched = !!finalWdtMatch;
+  if (!wdtMatched && wdtEnabled) {
+    qualityIssues.push('erp_not_matched');
+  }
+
+  // 检查2: 是否有金额（货值）
+  const amountColIdx = headers.findIndex(h => {
+    const name = (h || '').trim();
+    return name.includes('货值') || name.includes('金额') || name.includes('价格');
+  });
+  if (amountColIdx >= 0) {
+    const amount = (extractResult.values[amountColIdx] || '').trim();
+    if (!amount || !/^\d+\.?\d*$/.test(amount)) {
+      qualityIssues.push('no_amount');
+    }
+  }
+
+  // 检查3: 是否有物流单号
+  const logisticsColIdx2 = headers.findIndex(h => {
+    const name = (h || '').trim();
+    return name === '快递单号' || name === '物流单号';
+  });
+  if (logisticsColIdx2 >= 0) {
+    const logisticsNo = (extractResult.values[logisticsColIdx2] || '').trim();
+    if (!logisticsNo) {
+      qualityIssues.push('no_logistics_no');
+    }
+  }
+
+  // 检查4: 店铺名称是否误填了状态描述
+  const shopColIdx = headers.findIndex(h => {
+    const name = (h || '').trim();
+    return name === '店铺名称' || name === '店铺' || name === '商家';
+  });
+  if (shopColIdx >= 0) {
+    const shopVal = (extractResult.values[shopColIdx] || '').trim();
+    const statusKeywords = ['已退', '已退款', '已签收', '已发货', '已揽收', '平台已退', '退回', '异常'];
+    for (const kw of statusKeywords) {
+      if (shopVal === kw || shopVal.includes(kw)) {
+        qualityIssues.push('shop_name_invalid');
+        break;
+      }
+    }
+  }
+
   // 查找第一个空行
   let emptyRowIndex = rows.length;
   for (let i = 1; i < rows.length; i++) {
@@ -235,7 +284,9 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
       method: extractResult.method,
       nonEmptyCount: extractResult.nonEmptyCount,
       wdtMatch: finalWdtMatch ? { shop_name: finalWdtMatch.shop_name, logistics_no: finalWdtMatch.logistics_no } : null
-    }
+    },
+    qualityIssues,
+    wdtMatched
   };
 }
 
