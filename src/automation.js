@@ -12,7 +12,8 @@ const logger = require('./logger');
 
 const STATE_FILE = path.join(__dirname, '..', 'automation-state.json');
 const MAX_PROCESSED_IDS = 1000;
-const SEARCH_LIMIT = 50;
+const SEARCH_LIMIT = 200;       // 搜索最近200条（覆盖更多未处理消息）
+const MAX_BATCH_SIZE = 20;      // 每轮最多处理20条（避免单轮耗时过长）
 const DEFAULT_SEARCH_INTERVAL = 60000;
 const PENDING_TTL = 7 * 24 * 60 * 60 * 1000; // 7天
 const MAX_PENDING = 200;
@@ -184,8 +185,20 @@ async function searchAndProcess() {
 
     engine.stats.totalFound += newMessages.length;
     engine.dirty = true;
-    console.log(`[automation] 发现 ${newMessages.length} 条新消息`);
-    logger.log('auto_search', `搜索到 ${newMessages.length} 条新消息`, { keyword, total: resp.total });
+
+    // 限制每轮处理数量，避免单轮耗时过长
+    const remaining = newMessages.length;
+    if (remaining > MAX_BATCH_SIZE) {
+      newMessages = newMessages.slice(0, MAX_BATCH_SIZE);
+    }
+
+    console.log(`[automation] 发现 ${remaining} 条新消息，本轮处理 ${newMessages.length} 条`);
+    logger.log('auto_search', `发现 ${remaining} 条新消息`, {
+      keyword,
+      total: resp.total,
+      processing: newMessages.length,
+      remaining: remaining - newMessages.length
+    });
 
     // 解析目标文档和表格
     const targetResult = pipeline.resolveTarget(engine.config, gcfg.targetDocId, gcfg.targetId);
