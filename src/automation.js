@@ -212,12 +212,29 @@ async function searchAndProcess() {
     const { doc, target } = targetResult;
 
     // 读取表头（每轮只读一次，复用给所有消息）
-    const headersInfo = await pipeline.readSheetHeaders(engine.config, doc, target);
+    // 带重试机制：网络抖动导致TLS失败时自动重试
+    let headersInfo = null;
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      headersInfo = await pipeline.readSheetHeaders(engine.config, doc, target);
+      if (headersInfo.success) break;
+      if (attempt < MAX_RETRIES) {
+        const delay = attempt * 3000; // 3s, 6s
+        console.log(`[automation] 读取表头第${attempt}次失败: ${headersInfo.error}，${delay/1000}秒后重试...`);
+        logger.log('auto_search', `读取表头失败(第${attempt}次)`, { error: headersInfo.error, attempt, retryIn: delay });
+        await new Promise(r => setTimeout(r, delay));
+      }
+    }
     if (!headersInfo.success) {
       engine.lastError = '读取表头失败: ' + headersInfo.error;
-      console.error('[automation] 读取表头失败:', headersInfo.error);
+      console.error('[automation] 读取表头最终失败:', headersInfo.error);
+      logger.log('auto_search', `读取表头最终失败(${MAX_RETRIES}次重试后)`, { error: headersInfo.error });
       await persistState();
       return;
+    }
+    // 读取成功后清除上次错误
+    if (engine.lastError) {
+      engine.lastError = null;
     }
 
     // 逐条处理新消息
