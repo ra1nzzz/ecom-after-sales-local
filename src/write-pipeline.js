@@ -244,14 +244,15 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     qualityIssues.push('erp_not_matched');
   }
 
-  // 检查2: 是否有金额（货值）
+  // 检查2: 是否有有效金额（货值 > 0）
   const amountColIdx = headers.findIndex(h => {
     const name = (h || '').trim();
     return name.includes('货值') || name.includes('金额') || name.includes('价格');
   });
   if (amountColIdx >= 0) {
     const amount = (extractResult.values[amountColIdx] || '').trim();
-    if (!amount || !/^\d+\.?\d*$/.test(amount)) {
+    const numAmount = parseFloat(amount);
+    if (!amount || !/^\d+\.?\d*$/.test(amount) || numAmount <= 0) {
       qualityIssues.push('no_amount');
     }
   }
