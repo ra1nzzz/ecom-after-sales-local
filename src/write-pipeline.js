@@ -112,30 +112,64 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
 
       const isComplete = emptyFieldIndices.length === 0;
 
-      let duplicateInfo;
-      if (isComplete) {
-        duplicateInfo = { type: 'overwrite', existingRow: i, existingValues: existingValues, newValues: extractResult.values.slice(), changedFields: [] };
-        for (let j = 0; j < headers.length; j++) {
-          const oldVal = (existingValues[j] || '').trim();
-          const newVal = (extractResult.values[j] || '').trim();
-          if (oldVal !== newVal) {
-            duplicateInfo.changedFields.push({ col: j, header: headers[j], oldValue: existingValues[j] || '', newValue: extractResult.values[j] || '' });
-          }
+      // 比较新旧数据：找出有差异的字段
+      const changedFields = [];
+      const newFieldsFilled = [];  // 新数据有值但旧数据为空的字段
+      let allIdentical = true;
+
+      for (let j = 0; j < headers.length; j++) {
+        const headerName = (headers[j] || '').trim();
+        const isRemark = headerName === '备注' || headerName === 'remark';
+        const oldVal = (existingValues[j] || '').trim();
+        const newVal = (extractResult.values[j] || '').trim();
+
+        if (newVal && oldVal && oldVal !== newVal) {
+          allIdentical = false;
+          changedFields.push({ col: j, header: headers[j], oldValue: existingValues[j] || '', newValue: extractResult.values[j] || '' });
+        } else if (!oldVal && newVal && !isRemark) {
+          // 新数据有值，旧数据为空 → 可以补全
+          allIdentical = false;
+          newFieldsFilled.push({ col: j, header: headers[j], oldValue: '', newValue: newVal });
         }
-      } else {
-        const mergedValues = existingValues.slice();
-        const filledFields = [];
-        for (let j = 0; j < headers.length; j++) {
-          const existingVal = (existingValues[j] || '').trim();
-          const newVal = (extractResult.values[j] || '').trim();
-          if (!existingVal && newVal) {
-            mergedValues[j] = newVal;
-            filledFields.push({ col: j, header: headers[j], oldValue: '', newValue: newVal });
-          }
-        }
-        duplicateInfo = { type: 'merge', existingRow: i, existingValues: existingValues, newValues: extractResult.values.slice(), mergedValues: mergedValues, filledFields: filledFields, emptyFieldIndices: emptyFieldIndices };
       }
-      return { isDuplicate: true, targetRow: i, duplicateInfo: duplicateInfo };
+
+      // 情况1: 完全一致（所有非空字段值相同）→ 放弃写入
+      if (allIdentical) {
+        return {
+          isDuplicate: true,
+          targetRow: i,
+          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice() }
+        };
+      }
+
+      // 情况2: 旧数据不完整，新数据能补全 → merge
+      if (newFieldsFilled.length > 0) {
+        const mergedValues = existingValues.slice();
+        for (const f of newFieldsFilled) {
+          mergedValues[f.col] = f.newValue;
+        }
+        return {
+          isDuplicate: true,
+          targetRow: i,
+          duplicateInfo: { type: 'merge', existingRow: i, existingValues, newValues: extractResult.values.slice(), mergedValues, filledFields: newFieldsFilled, emptyFieldIndices }
+        };
+      }
+
+      // 情况3: 旧数据已完整，新数据有不同值 → 不覆盖（保护已有数据）
+      if (isComplete) {
+        return {
+          isDuplicate: true,
+          targetRow: i,
+          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice(), changedFields }
+        };
+      }
+
+      // 情况4: 旧数据不完整，新数据也没有新信息 → skip
+      return {
+        isDuplicate: true,
+        targetRow: i,
+        duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice() }
+      };
     }
   }
 
@@ -264,6 +298,32 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
   // 查重检测
   const dupResult = detectDuplicate(headers, rows, extractResult, target);
   const duplicateInfo = dupResult.duplicateInfo;
+
+  // 如果查重结果为skip，直接返回跳过标记（不执行写入）
+  if (duplicateInfo && duplicateInfo.type === 'skip') {
+    return {
+      success: true,
+      skipped: true,
+      skipReason: duplicateInfo.changedFields && duplicateInfo.changedFields.length > 0
+        ? 'existing_data_complete'
+        : 'identical',
+      headers,
+      values: extractResult.values,
+      newRowValues: extractResult.values,
+      missing: extractResult.missing,
+      targetRow: duplicateInfo.existingRow,
+      sheetId: sheet.sheet_id,
+      targetFileId: targetFileId,
+      duplicate: duplicateInfo,
+      debug: {
+        method: extractResult.method,
+        nonEmptyCount: extractResult.nonEmptyCount,
+        wdtMatch: finalWdtMatch ? { shop_name: finalWdtMatch.shop_name, logistics_no: finalWdtMatch.logistics_no } : null
+      },
+      qualityIssues,
+      wdtMatched
+    };
+  }
 
   const finalTargetRow = duplicateInfo ? duplicateInfo.existingRow : emptyRowIndex;
   const finalValues = (duplicateInfo && duplicateInfo.type === 'merge')

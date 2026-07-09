@@ -12,6 +12,7 @@ const logger = require('./logger');
 
 const STATE_FILE = path.join(__dirname, '..', 'automation-state.json');
 const MAX_PROCESSED_IDS = 1000;
+const MAX_BLOCKED_IDS = 5000;     // 屏蔽列表上限（比processedIds更大，确保清空的消息不会重复入池）
 const SEARCH_LIMIT = 200;       // 搜索最近200条（覆盖更多未处理消息）
 const MAX_BATCH_SIZE = 20;      // 每轮最多处理20条（避免单轮耗时过长）
 const DEFAULT_SEARCH_INTERVAL = 60000;
@@ -38,6 +39,8 @@ let engine = {
   },
   processedIds: new Set(),
   processedIdList: [],
+  blockedIds: new Set(),       // 屏蔽列表：待审清空/拒绝的消息ID，不受processedIds裁剪影响
+  blockedIdList: [],
   pendingMessages: new Map()
 };
 
@@ -106,7 +109,8 @@ function getStatus() {
     lastError: engine.lastError,
     stats: { ...engine.stats },
     pendingCount: engine.pendingMessages.size,
-    processedCount: engine.processedIds.size
+    processedCount: engine.processedIds.size,
+    blockedCount: engine.blockedIds.size
   };
 }
 
@@ -152,8 +156,8 @@ async function searchAndProcess() {
     const resp = await guanchen.searchMessages(gcfg, keyword, SEARCH_LIMIT);
     const messages = resp.messages || [];
 
-    // 过滤已处理的消息
-    let newMessages = messages.filter(m => !engine.processedIds.has(m.id));
+    // 过滤已处理的消息和被屏蔽的消息
+    let newMessages = messages.filter(m => !engine.processedIds.has(m.id) && !engine.blockedIds.has(m.id));
 
     // 过滤：要求消息内容同时带有数字
     if (gcfg.requireDigits) {
@@ -289,6 +293,18 @@ async function processMessage(message, doc, target, headersInfo) {
       qualityIssues: prepareResult.qualityIssues || []
     });
 
+    // 查重跳过：数据已存在且完全一致或旧数据更完整 → 标记已处理，不写入
+    if (prepareResult.skipped) {
+      addProcessedId(messageId);
+      engine.dirty = true;
+      logger.log('auto_write', `消息 #${messageId} 跳过写入（查重${prepareResult.skipReason === 'identical' ? '完全一致' : '旧数据已完整'}）`, {
+        row: prepareResult.targetRow,
+        skipReason: prepareResult.skipReason
+      });
+      console.log(`[automation] 消息 #${messageId} 跳过写入: 查重${prepareResult.skipReason === 'identical' ? '完全一致' : '旧数据已完整'}`);
+      return;
+    }
+
     // 质量门禁：autoConfirm模式下，有质量问题的消息转入待审而非自动写入
     const qualityIssues = prepareResult.qualityIssues || [];
     const hasQualityIssue = qualityIssues.length > 0;
@@ -397,13 +413,13 @@ async function rejectMessage(messageId) {
   }
 
   engine.pendingMessages.delete(id);
-  addProcessedId(id);
+  addBlockedId(id);  // 加入屏蔽列表，避免重复入池
   engine.stats.totalPending = Math.max(0, engine.stats.totalPending - 1);
   engine.stats.totalRejected++;
   engine.dirty = true;
   await persistState();
-  logger.log('auto_reject', `消息 #${id} 已拒绝`);
-  console.log(`[automation] 消息 #${id} 已拒绝`);
+  logger.log('auto_reject', `消息 #${id} 已拒绝并屏蔽`);
+  console.log(`[automation] 消息 #${id} 已拒绝并屏蔽`);
   return { success: true };
 }
 
@@ -414,7 +430,7 @@ async function clearAllPending() {
   const count = engine.pendingMessages.size;
   if (count === 0) return { success: true, cleared: 0 };
   for (const [id] of engine.pendingMessages) {
-    addProcessedId(id);
+    addBlockedId(id);  // 加入屏蔽列表，避免重复入池
     engine.stats.totalRejected++;
   }
   engine.pendingMessages.clear();
@@ -479,8 +495,10 @@ async function persistState() {
   if (!engine.dirty) return;
   try {
     trimProcessedIds();
+    trimBlockedIds();
     const state = {
       processedIds: Array.from(engine.processedIdList),
+      blockedIds: Array.from(engine.blockedIdList),
       pendingMessages: Array.from(engine.pendingMessages.entries()).map(([id, item]) => ({
         id,
         message: item.message,
@@ -510,6 +528,10 @@ function loadState() {
       engine.processedIds = new Set(state.processedIds);
       engine.processedIdList = Array.from(engine.processedIds);
     }
+    if (Array.isArray(state.blockedIds)) {
+      engine.blockedIds = new Set(state.blockedIds);
+      engine.blockedIdList = Array.from(engine.blockedIds);
+    }
     if (Array.isArray(state.pendingMessages)) {
       engine.pendingMessages = new Map();
       for (const item of state.pendingMessages) {
@@ -532,7 +554,7 @@ function loadState() {
       engine.lastSearchTime = state.lastSearchTime;
     }
 
-    console.log(`[automation] 状态已恢复: ${engine.processedIds.size} 条已处理, ${engine.pendingMessages.size} 条待审`);
+    console.log(`[automation] 状态已恢复: ${engine.processedIds.size} 条已处理, ${engine.blockedIds.size} 条屏蔽, ${engine.pendingMessages.size} 条待审`);
   } catch (err) {
     console.error('[automation] 状态加载失败:', err.message);
   }
@@ -560,6 +582,32 @@ function addProcessedId(id) {
     engine.processedIdList.push(id);
     engine.dirty = true;
   }
+}
+
+/**
+ * 添加屏蔽ID（待审清空/拒绝时调用，不受processedIds裁剪影响）
+ */
+function addBlockedId(id) {
+  if (!engine.blockedIds.has(id)) {
+    engine.blockedIds.add(id);
+    engine.blockedIdList.push(id);
+    engine.dirty = true;
+  }
+  // 同时加入processedIds（双重保险）
+  addProcessedId(id);
+}
+
+/**
+ * 裁剪屏蔽列表，保留最近 MAX_BLOCKED_IDS 条
+ */
+function trimBlockedIds() {
+  if (engine.blockedIdList.length <= MAX_BLOCKED_IDS) return;
+  const removeCount = engine.blockedIdList.length - MAX_BLOCKED_IDS;
+  const removed = engine.blockedIdList.splice(0, removeCount);
+  for (const id of removed) {
+    engine.blockedIds.delete(id);
+  }
+  console.log(`[automation] blockedIds 已裁剪至 ${engine.blockedIdList.length} 条`);
 }
 
 /**
