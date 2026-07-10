@@ -300,6 +300,8 @@ async function handleRequest(req, res) {
       for (const doc of config.documents) {
         docProvider.clearCache(doc, doc.fileId);
       }
+      // 热更新运行中的引擎配置（无需停止再启动）
+      automation.updateConfig(config);
       // 清理旧字段，避免混淆
       if ('defaultDocumentId' in newConfig) {
         delete newConfig.defaultDocumentId;
