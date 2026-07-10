@@ -90,7 +90,9 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
     return { isDuplicate: false, targetRow: -1, duplicateInfo: null };
   }
 
-  const newLogisticsNo = (extractResult.values[logisticsColIdx] || '').trim();
+  // 防御 null/undefined values
+  const values = extractResult.values || [];
+  const newLogisticsNo = (values[logisticsColIdx] || '').trim();
   if (!newLogisticsNo) {
     return { isDuplicate: false, targetRow: -1, duplicateInfo: null };
   }
@@ -121,11 +123,11 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
         const headerName = (headers[j] || '').trim();
         const isRemark = headerName === '备注' || headerName === 'remark';
         const oldVal = (existingValues[j] || '').trim();
-        const newVal = (extractResult.values[j] || '').trim();
+        const newVal = (values[j] || '').trim();
 
         if (newVal && oldVal && oldVal !== newVal) {
           allIdentical = false;
-          changedFields.push({ col: j, header: headers[j], oldValue: existingValues[j] || '', newValue: extractResult.values[j] || '' });
+          changedFields.push({ col: j, header: headers[j], oldValue: existingValues[j] || '', newValue: values[j] || '' });
         } else if (!oldVal && newVal && !isRemark) {
           // 新数据有值，旧数据为空 → 可以补全
           allIdentical = false;
@@ -138,7 +140,7 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
         return {
           isDuplicate: true,
           targetRow: i,
-          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice() }
+          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: values.slice() }
         };
       }
 
@@ -151,7 +153,7 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
         return {
           isDuplicate: true,
           targetRow: i,
-          duplicateInfo: { type: 'merge', existingRow: i, existingValues, newValues: extractResult.values.slice(), mergedValues, filledFields: newFieldsFilled, emptyFieldIndices }
+          duplicateInfo: { type: 'merge', existingRow: i, existingValues, newValues: values.slice(), mergedValues, filledFields: newFieldsFilled, emptyFieldIndices }
         };
       }
 
@@ -160,7 +162,7 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
         return {
           isDuplicate: true,
           targetRow: i,
-          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice(), changedFields }
+          duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: values.slice(), changedFields }
         };
       }
 
@@ -168,7 +170,7 @@ function detectDuplicate(headers, parsedRows, extractResult, target) {
       return {
         isDuplicate: true,
         targetRow: i,
-        duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: extractResult.values.slice() }
+        duplicateInfo: { type: 'skip', existingRow: i, existingValues, newValues: values.slice() }
       };
     }
   }
@@ -187,6 +189,9 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
   }
   if (description.length > MAX_DESCRIPTION_LENGTH) {
     return { success: false, error: '描述内容过长' };
+  }
+  if (!headersInfo || !headersInfo.success) {
+    return { success: false, error: headersInfo ? headersInfo.error : '表头信息缺失' };
   }
 
   const { headers, allLines, sheet, targetFileId } = headersInfo;
