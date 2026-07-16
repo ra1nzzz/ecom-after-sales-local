@@ -19,12 +19,26 @@ function buildSystemPrompt(headers, tableName) {
     '6. 日期字段格式为 YYYY-MM-DD。\n' +
     '7. 识别输入中直接出现的字段名（如"订单号""快递单号""货值"等），提取其后的值。\n\n' +
     '【字段值约束 - 严格遵守】\n' +
-    '- 店铺名称：必须是店铺/商家的名称（如"华强北数码3C店"），不要填入状态描述（如"平台已退"、"已退款"等）。\n' +
+    '- 店铺名称：必须是店铺/商家的名称（如"华强北数码3C店"），不要填入状态描述（如"平台已退"、"已退款"等），也不要填入"顾客"等非店铺名。\n' +
     '- 平台：必须是电商平台名称（如"淘宝"、"拼多多"、"京东"、"抖音"等），不要填入订单状态。\n' +
     '- 理赔类型：只填类型关键词（如"丢件"、"破损"、"退件"），不要带"理赔"二字。\n' +
     '- 订单号/快递单号：只填纯数字或字母数字组合，不要带中文描述。\n' +
     '- 货值/运费：只填数字（可带小数），不要带"元"字或其他文字。\n' +
     '- 如果输入中的某个词无法明确对应到某个字段，宁可留空也不要猜测填入。\n\n' +
+    '【快递单号识别规则 - 严格遵守】\n' +
+    '当输入中没有明确标注"订单号"或"快递单号"时，开头的纯数字串优先识别为快递单号，而非订单号。\n' +
+    '常见快递单号格式：\n' +
+    '- 邮政新单号：13位纯数字（如1377342763809）\n' +
+    '- 顺丰：SF开头+数字（如SF1234567890）\n' +
+    '- 圆通：YT开头+数字（如YT9876543210）\n' +
+    '- 申通：STO开头+数字 或 纯数字\n' +
+    '- 中通：ZTO开头+数字 或 纯数字\n' +
+    '- 韵达：YD开头+数字 或 纯数字\n' +
+    '- 极兔：JT开头+数字\n' +
+    '- 京东：JD开头+数字\n' +
+    '- 德邦：DBS开头+数字\n' +
+    '注意：13位纯数字（如1377342763809）是邮政新单号格式，应填入快递单号，不要填入订单号。\n' +
+    '只有当输入明确标注"订单号"时，才将对应数字填入订单号字段。\n\n' +
     '【常见别名】\n' +
     '- "单号" → 快递单号\n' +
     '- "金额/价格" → 货值(元)\n' +
@@ -87,6 +101,22 @@ function ruleBasedExtract(headers, description) {
   // 理赔类型关键词
   const claimTypes = CLAIM_TYPES;
   
+  // ========== 预处理：从无空格消息中提取开头的长数字串作为快递单号 ==========
+  // 如 "1377342763809快递联系顾客漏油破损拒收登记理赔38.5元"
+  const logisticsHeader = headers.find(h => {
+    const name = (h || '').trim();
+    return name === '快递单号' || name === '物流单号';
+  });
+  if (logisticsHeader) {
+    // 匹配开头的纯数字(>=10位)或字母+数字组合(如SF1234567890)
+    const leadingMatch = description.match(/^(\d{10,}|[A-Za-z]{2,4}\d{8,})/);
+    if (leadingMatch) {
+      result[logisticsHeader] = leadingMatch[1];
+      // 从描述中移除已提取的单号，避免后续误匹配
+      description = description.substring(leadingMatch[1].length);
+    }
+  }
+  
   const tokens = description.split(/\s+/).filter(t => t.length > 0);
   let currentHeader = null;
   let valueParts = [];
@@ -144,7 +174,9 @@ function ruleBasedExtract(headers, description) {
             result[claimHeader] = ct;
             // 提取剩余部分中的金额
             const rest = token.replace(ct, '').replace('理赔', '');
-            const amountMatch = rest.match(/(\d+\.?\d*)/);
+            // 优先匹配带"元"的金额（如"38.5元"），避免误匹配快递单号
+            const amountWithUnit = rest.match(/(\d+\.?\d*)元/);
+            const amountMatch = amountWithUnit || rest.match(/(\d+\.?\d*)$/);
             if (amountMatch) {
               const amountHeader = headers.find(h => h.includes('货值'));
               if (amountHeader) result[amountHeader] = amountMatch[1];

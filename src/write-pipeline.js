@@ -206,16 +206,51 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     wdtEnabled ? autoMatchWdtOrder(wdtCfg, description) : Promise.resolve(null)
   ]);
 
-  // ERP优先：如果autoMatchWdtOrder未命中，但LLM提取到了物流单号，用该单号直接查询ERP
+  // ========== 规则后处理：修正LLM提取的常见错误 ==========
+
+  // 修正1: 快递单号为空或"未提供"，但订单号是纯数字长串(>=10位) → 可能是快递单号被误填
+  const logisticsColIdx = headers.findIndex(h => {
+    const name = (h || '').trim();
+    return name === '快递单号' || name === '物流单号';
+  });
+  const orderColIdx = headers.findIndex(h => {
+    const name = (h || '').trim();
+    return name === '订单号' || name === '订单编号';
+  });
+  if (logisticsColIdx >= 0 && orderColIdx >= 0) {
+    const logisticsVal = (extractResult.values[logisticsColIdx] || '').trim();
+    const orderVal = (extractResult.values[orderColIdx] || '').trim();
+    const logisticsEmpty = !logisticsVal || logisticsVal === '未提供' || logisticsVal === '无';
+    // 订单号是纯数字且>=10位（邮政新单号13位、其他快递单号通常也>=10位）
+    const orderLooksLikeLogistics = /^\d{10,}$/.test(orderVal) || /^[A-Za-z]{2,4}\d{8,}$/.test(orderVal);
+    if (logisticsEmpty && orderLooksLikeLogistics) {
+      console.log(`[pipeline] 规则修正: 订单号"${orderVal}"疑似快递单号，移至快递单号字段`);
+      extractResult.values[logisticsColIdx] = orderVal;
+      extractResult.values[orderColIdx] = '';
+      // 重新计算 nonEmptyCount
+      extractResult.nonEmptyCount = extractResult.values.filter(v => v && v.trim()).length;
+    }
+  }
+
+  // 修正2: 快递单号含中文前缀（如"快递单号SF123"）→ 清理
+  if (logisticsColIdx >= 0) {
+    const val = (extractResult.values[logisticsColIdx] || '').trim();
+    if (val && /[\u4e00-\u9fa5]/.test(val)) {
+      // 尝试提取纯字母数字部分
+      const cleaned = val.match(/[A-Za-z0-9]{8,}/);
+      if (cleaned) {
+        console.log(`[pipeline] 规则修正: 快递单号"${val}"清理为"${cleaned[0]}"`);
+        extractResult.values[logisticsColIdx] = cleaned[0];
+      }
+    }
+  }
+
+  // ERP优先：如果autoMatchWdtOrder未命中，用LLM提取的快递单号查ERP
   let finalWdtMatch = wdtMatch;
   if (!finalWdtMatch && wdtEnabled) {
-    const logisticsColIdx = headers.findIndex(h => {
-      const name = (h || '').trim();
-      return name === '快递单号' || name === '物流单号';
-    });
     if (logisticsColIdx >= 0) {
       const extractedNo = (extractResult.values[logisticsColIdx] || '').trim();
-      if (extractedNo && /\d/.test(extractedNo)) {
+      if (extractedNo && /\d/.test(extractedNo) && extractedNo !== '未提供') {
         try {
           const wdtResult = await queryOrder(wdtCfg, extractedNo);
           if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
@@ -227,6 +262,24 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
           }
         } catch (e) {
           console.log(`[pipeline] LLM提取的物流单号 ${extractedNo} ERP未匹配: ${e.message}`);
+        }
+      }
+    }
+    // ERP fallback: 快递单号没查到，尝试用订单号查
+    if (!finalWdtMatch && orderColIdx >= 0) {
+      const orderNo = (extractResult.values[orderColIdx] || '').trim();
+      if (orderNo && /^\d{8,}$/.test(orderNo)) {
+        try {
+          const wdtResult = await queryOrder(wdtCfg, orderNo);
+          if (wdtResult.success && wdtResult.orders && wdtResult.orders.length > 0) {
+            finalWdtMatch = wdtResult.orders[0];
+            if (finalWdtMatch.warehouse_no) {
+              finalWdtMatch.warehouse_name = await queryWarehouse(wdtCfg, finalWdtMatch.warehouse_no);
+            }
+            console.log(`[pipeline] 订单号 ${orderNo} ERP匹配成功(fallback)`);
+          }
+        } catch (e) {
+          console.log(`[pipeline] 订单号 ${orderNo} ERP未匹配(fallback): ${e.message}`);
         }
       }
     }
