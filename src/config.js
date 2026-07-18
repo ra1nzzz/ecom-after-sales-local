@@ -35,7 +35,11 @@ const DEFAULT_CONFIG = {
     sid: '',
     key: '',
     secret: '',
-    salt: ''
+    salt: '',
+    warehouseMap: {
+      '005': '洛奇-电商仓',
+      '001': '极兔-佛山仓'
+    }
   },
   guanchen: {
     apiKey: '',

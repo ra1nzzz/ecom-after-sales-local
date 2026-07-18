@@ -189,20 +189,47 @@ function formatTradeStatus(status) {
 }
 
 /**
+ * 本地仓库映射（API降级方案）
+ * 当 setting.Warehouse.queryWarehouse 返回0结果时使用
+ * 可通过 config.wangdian.warehouseMap 覆盖/扩展
+ */
+const DEFAULT_WAREHOUSE_MAP = {
+  '005': '洛奇-电商仓',
+  '001': '极兔-佛山仓',
+};
+
+/**
  * 查询仓库名称
+ * 优先调用 setting.Warehouse.queryWarehouse API
+ * API返回0结果时降级到本地映射（config.wangdian.warehouseMap 或 DEFAULT_WAREHOUSE_MAP）
  */
 async function queryWarehouse(credentials, warehouseNo) {
   if (!warehouseNo) return '';
+  
+  // 合并本地映射（config覆盖默认值）
+  const warehouseMap = { ...DEFAULT_WAREHOUSE_MAP, ...((credentials && credentials.warehouseMap) || {}) };
+
+  // 优先调用API（按官方文档要求包含start_time/end_time）
   try {
     const result = await callApi(credentials, 'setting.Warehouse.queryWarehouse', {
-      warehouse_no: warehouseNo
+      warehouse_no: warehouseNo,
+      start_time: '2020-01-01 00:00:00',
+      end_time: '2099-12-31 23:59:59',
+      hide_delete: 0
     });
-    // 接口返回 data.details[].name
     if (result.status === 0 && result.data && result.data.details && result.data.details.length > 0) {
-      return result.data.details[0].name || warehouseNo;
+      return result.data.details[0].name || warehouseMap[warehouseNo] || warehouseNo;
+    }
+    // API返回0结果，降级到本地映射
+    if (warehouseMap[warehouseNo]) {
+      console.log(`[wdt] 仓库API返回0结果，降级到本地映射: ${warehouseNo} → ${warehouseMap[warehouseNo]}`);
+      return warehouseMap[warehouseNo];
     }
   } catch (err) {
     console.error('[wdt] 查询仓库失败:', err.message);
+    if (warehouseMap[warehouseNo]) {
+      return warehouseMap[warehouseNo];
+    }
   }
   return warehouseNo;
 }
@@ -253,4 +280,4 @@ function mergeWdtData(headers, extractResult, wdtMatch) {
   extractResult.missing = headers.filter((h, i) => !extractResult.values[i] || !extractResult.values[i].trim());
 }
 
-module.exports = { queryOrder, callApi, calcSign, parseShopInfo, formatTradeStatus, autoMatchWdtOrder, mergeWdtData };
+module.exports = { queryOrder, callApi, calcSign, parseShopInfo, formatTradeStatus, autoMatchWdtOrder, mergeWdtData, queryWarehouse };
