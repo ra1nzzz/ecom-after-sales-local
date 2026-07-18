@@ -492,6 +492,75 @@ async function rejectMessage(messageId) {
 }
 
 /**
+ * 编辑后提交：用户在待审面板编辑字段值后提交写入
+ * @param {number|string} messageId 消息ID
+ * @param {Array<string>} editedValues 编辑后的完整values数组
+ * @param {object} latestConfig 最新配置
+ */
+async function editSubmitMessage(messageId, editedValues, latestConfig) {
+  const id = Number(messageId);
+  const item = engine.pendingMessages.get(id) || engine.pendingMessages.get(messageId);
+  if (!item) {
+    return { success: false, error: '待审消息不存在' };
+  }
+
+  const pr = item.prepareResult;
+  if (!pr || !pr.success) {
+    return { success: false, error: '提取结果无效，无法编辑' };
+  }
+
+  // 将编辑后的值合并到 prepareResult
+  // 用户编辑的值覆盖原有值（包括空字符串，用户可能想清空某个字段）
+  if (Array.isArray(editedValues) && editedValues.length === pr.values.length) {
+    pr.values = editedValues.slice();
+    // 重新计算 nonEmptyCount
+    pr.nonEmptyCount = editedValues.filter(v => v && v.trim()).length;
+  } else {
+    return { success: false, error: '编辑数据格式不匹配' };
+  }
+
+  // 清除查重信息（编辑后可能不再重复）
+  pr.duplicate = null;
+  pr.skipped = false;
+  pr.targetRow = null;
+
+  // 使用最新配置
+  const cfg = latestConfig || engine.config;
+  const gcfg = cfg.guanchen;
+  const targetResult = pipeline.resolveTarget(cfg, gcfg.targetDocId, gcfg.targetId);
+  if (!targetResult.success) {
+    return { success: false, error: targetResult.error };
+  }
+
+  const { doc } = targetResult;
+
+  // 重新读取表头
+  const headersInfo = await pipeline.readSheetHeaders(cfg, doc, targetResult.target);
+  if (!headersInfo.success) {
+    return { success: false, error: '读取表头失败: ' + headersInfo.error };
+  }
+
+  // 更新 prepareResult 中的 sheetId/targetFileId
+  pr.sheetId = headersInfo.sheet.sheet_id;
+  pr.targetFileId = doc.fileId;
+
+  const writeResult = await pipeline.executeWrite(cfg, doc, pr, headersInfo);
+  if (!writeResult.success) {
+    return { success: false, error: '写入失败: ' + writeResult.error };
+  }
+
+  addProcessedId(id);
+  engine.pendingMessages.delete(id);
+  engine.stats.totalPending = Math.max(0, engine.stats.totalPending - 1);
+  engine.stats.totalApproved++;
+  engine.dirty = true;
+  await persistState();
+  logger.log('auto_edit', `消息 #${id} 编辑后提交写入`, { row: writeResult.row });
+  console.log(`[automation] 消息 #${id} 编辑后提交写入，行: ${writeResult.row}`);
+  return { success: true, row: writeResult.row };
+}
+
+/**
  * 清空所有待审消息（标记为已拒绝）
  */
 async function clearAllPending() {
@@ -740,6 +809,7 @@ module.exports = {
   searchAndProcess,
   approveMessage,
   rejectMessage,
+  editSubmitMessage,
   clearAllPending,
   reExtractMessage,
   shutdown

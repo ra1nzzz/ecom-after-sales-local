@@ -2212,6 +2212,7 @@
       const div = document.createElement('div');
       div.className = 'card';
       div.style.marginTop = '10px';
+      div.dataset.msgId = String(item.id);
 
       const msg = item.message || {};
       var ts = msg.msg_time;
@@ -2219,34 +2220,126 @@
       const sender = esc(msg.sender_name || msg.sender_wxid || '未知');
       const content = esc(msg.content || '');
 
-      let previewTable = '';
       const pr = item.prepareResult;
-      if (pr && pr.success && pr.headers && pr.values) {
-        const rows = pr.headers.map((h, i) =>
-          '<tr><td style="padding:2px 8px;color:var(--text-muted);font-size:12px">' + esc(h) + '</td>' +
-          '<td style="padding:2px 8px;font-size:12px">' + esc(pr.values[i] || '') + '</td></tr>'
-        ).join('');
-        previewTable = '<table style="margin-top:6px;border-collapse:collapse"><tbody>' + rows + '</tbody></table>';
+      const hasPreview = pr && pr.success && pr.headers && pr.values;
+
+      // 质量问题标签
+      var qualityBadge = '';
+      if (pr && pr.qualityIssues && pr.qualityIssues.length > 0) {
+        qualityBadge = ' <span style="color:var(--danger);font-size:11px">[' + pr.qualityIssues.join(', ') + ']</span>';
       }
 
       div.innerHTML =
         '<div style="display:flex;justify-content:space-between;align-items:start">' +
           '<div style="flex:1">' +
-            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + sender + ' · ' + msgTime + '</div>' +
+            '<div style="font-size:12px;color:var(--text-muted);margin-bottom:4px">' + sender + ' · ' + msgTime + qualityBadge + '</div>' +
             '<div style="font-size:13px;margin-bottom:4px;white-space:pre-wrap;word-break:break-all">' + content + '</div>' +
-            previewTable +
+            '<div class="preview-area"></div>' +
+            '<div class="edit-area" style="display:none"></div>' +
           '</div>' +
         '</div>' +
-        '<div class="btn-row" style="margin-top:8px">' +
-          '<button class="btn btn-primary" data-action="approve" data-msg-id="' + esc(String(item.id)) + '">审核通过</button>' +
-          '<button class="btn btn-secondary" data-action="reject" data-msg-id="' + esc(String(item.id)) + '">拒绝</button>' +
-          '<button class="btn btn-secondary" data-action="reextract" data-msg-id="' + esc(String(item.id)) + '">重新识别</button>' +
+        '<div class="btn-row view-actions" style="margin-top:8px">' +
+          '<button class="btn btn-primary" data-action="approve">审核通过</button>' +
+          '<button class="btn btn-secondary" data-action="reject">拒绝</button>' +
+          '<button class="btn btn-secondary" data-action="reextract">重新识别</button>' +
+          (hasPreview ? '<button class="btn btn-secondary" data-action="edit">编辑</button>' : '') +
+        '</div>' +
+        '<div class="btn-row edit-actions" style="margin-top:8px;display:none">' +
+          '<button class="btn btn-primary" data-action="submit-edit">提交</button>' +
+          '<button class="btn btn-secondary" data-action="cancel-edit">取消编辑</button>' +
         '</div>';
 
-      div.querySelector('[data-action="approve"]').addEventListener('click', function() { approvePendingMessage(this.getAttribute('data-msg-id')); });
-      div.querySelector('[data-action="reject"]').addEventListener('click', function() { rejectPendingMessage(this.getAttribute('data-msg-id')); });
-      div.querySelector('[data-action="reextract"]').addEventListener('click', function() { reExtractPendingMessage(this.getAttribute('data-msg-id')); });
+      // 渲染预览表格
+      if (hasPreview) {
+        renderPreviewTable(div, pr);
+      }
+
+      // 绑定按钮事件
+      const msgId = String(item.id);
+      div.querySelector('[data-action="approve"]').addEventListener('click', function() { approvePendingMessage(msgId); });
+      div.querySelector('[data-action="reject"]').addEventListener('click', function() { rejectPendingMessage(msgId); });
+      div.querySelector('[data-action="reextract"]').addEventListener('click', function() { reExtractPendingMessage(msgId); });
+      var editBtn = div.querySelector('[data-action="edit"]');
+      if (editBtn) editBtn.addEventListener('click', function() { enterEditMode(div, pr); });
+      div.querySelector('[data-action="submit-edit"]').addEventListener('click', function() { submitEdit(msgId, div, pr); });
+      div.querySelector('[data-action="cancel-edit"]').addEventListener('click', function() { cancelEdit(div, pr); });
       return div;
+    }
+
+    function renderPreviewTable(div, pr) {
+      const rows = pr.headers.map((h, i) =>
+        '<tr><td style="padding:2px 8px;color:var(--text-muted);font-size:12px;white-space:nowrap">' + esc(h) + '</td>' +
+        '<td style="padding:2px 8px;font-size:12px">' + esc(pr.values[i] || '') + '</td></tr>'
+      ).join('');
+      div.querySelector('.preview-area').innerHTML =
+        '<table style="margin-top:6px;border-collapse:collapse"><tbody>' + rows + '</tbody></table>';
+    }
+
+    function enterEditMode(div, pr) {
+      // 隐藏预览+操作按钮，显示编辑区+编辑按钮
+      div.querySelector('.preview-area').style.display = 'none';
+      div.querySelector('.view-actions').style.display = 'none';
+      div.querySelector('.edit-area').style.display = '';
+      div.querySelector('.edit-actions').style.display = '';
+
+      // 生成可编辑表格
+      var rows = pr.headers.map(function(h, i) {
+        var val = pr.values[i] || '';
+        return '<tr>' +
+          '<td style="padding:2px 8px;color:var(--text-muted);font-size:12px;white-space:nowrap">' + esc(h) + '</td>' +
+          '<td style="padding:2px 8px"><input type="text" class="edit-input" data-col="' + i + '" value="' + esc(val).replace(/"/g, '&quot;') + '" style="width:200px;padding:2px 4px;font-size:12px;border:1px solid var(--border-color);border-radius:3px;background:var(--bg-secondary);color:var(--text-primary)" /></td>' +
+          '</tr>';
+      }).join('');
+      div.querySelector('.edit-area').innerHTML =
+        '<table style="margin-top:6px;border-collapse:collapse"><tbody>' + rows + '</tbody></table>';
+    }
+
+    function cancelEdit(div, pr) {
+      div.querySelector('.edit-area').style.display = 'none';
+      div.querySelector('.edit-area').innerHTML = '';
+      div.querySelector('.edit-actions').style.display = 'none';
+      div.querySelector('.preview-area').style.display = '';
+      div.querySelector('.view-actions').style.display = '';
+    }
+
+    async function submitEdit(messageId, div, pr) {
+      // 收集编辑后的值
+      var inputs = div.querySelectorAll('.edit-input');
+      var editedValues = [];
+      for (var i = 0; i < pr.values.length; i++) {
+        editedValues.push(pr.values[i] || '');
+      }
+      inputs.forEach(function(input) {
+        var col = parseInt(input.getAttribute('data-col'));
+        editedValues[col] = input.value;
+      });
+
+      // 禁用按钮防止重复提交
+      var submitBtn = div.querySelector('[data-action="submit-edit"]');
+      var cancelBtn = div.querySelector('[data-action="cancel-edit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = '提交中...'; }
+      if (cancelBtn) { cancelBtn.disabled = true; }
+
+      try {
+        const data = await apiFetch('/api/automation/edit-submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messageId: messageId, editedValues: editedValues })
+        });
+        if (data.success) {
+          showToast('编辑后已写入文档，行: ' + data.row);
+          loadPendingMessages();
+          loadAutomationStatus();
+        } else {
+          showToast(data.error || '写入失败', 'error');
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '提交'; }
+          if (cancelBtn) { cancelBtn.disabled = false; }
+        }
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = '提交'; }
+        if (cancelBtn) { cancelBtn.disabled = false; }
+      }
     }
 
     async function approvePendingMessage(messageId) {

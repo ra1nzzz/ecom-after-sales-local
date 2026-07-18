@@ -823,6 +823,32 @@ async function handleRequest(req, res) {
     return;
   }
 
+  // --- 观尘自动化：编辑后提交 ---
+  if (url.pathname === '/api/automation/edit-submit' && req.method === 'POST') {
+    const body = await readBody(req);
+    const messageId = body.messageId;
+    const editedValues = body.editedValues;
+    if (messageId === undefined || messageId === null) {
+      sendJSON(res, 400, { success: false, error: '缺少 messageId' });
+      return;
+    }
+    if (!Array.isArray(editedValues)) {
+      sendJSON(res, 400, { success: false, error: '缺少 editedValues 数组' });
+      return;
+    }
+    try {
+      const result = await automation.editSubmitMessage(messageId, editedValues, config);
+      if (result.success) {
+        sendJSON(res, 200, { success: true, message: '编辑后已写入文档', row: result.row });
+      } else {
+        sendJSON(res, 400, { success: false, error: result.error });
+      }
+    } catch (err) {
+      sendJSON(res, 500, { success: false, error: err.message });
+    }
+    return;
+  }
+
   // --- 观尘自动化：审核拒绝 ---
   if (url.pathname === '/api/automation/reject' && req.method === 'POST') {
     const body = await readBody(req);
