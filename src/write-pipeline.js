@@ -8,8 +8,7 @@ const docProvider = require('./doc-provider');
 const { extractRowData } = require('./extractor');
 const { autoMatchWdtOrder, mergeWdtData, queryOrder, queryWarehouse } = require('./wangdian');
 const { getDocumentById } = require('./config');
-const { parseCsvLine } = require('./shared-docs');
-const { RateLimitError } = require('./tencent-docs');
+const { parseCsvLine, RateLimitError } = require('./shared-docs');
 const writeQueue = require('./write-queue');
 
 const HEADER_SAMPLE_ROW_LIMIT = 50;
@@ -317,13 +316,9 @@ async function extractAndPrepare(config, doc, target, description, headersInfo, 
     }
   }
 
-  // 检查3: 是否有物流单号
-  const logisticsColIdx2 = headers.findIndex(h => {
-    const name = (h || '').trim();
-    return name === '快递单号' || name === '物流单号';
-  });
-  if (logisticsColIdx2 >= 0) {
-    const logisticsNo = (extractResult.values[logisticsColIdx2] || '').trim();
+  // 检查3: 是否有物流单号（复用已定义的 logisticsColIdx）
+  if (logisticsColIdx >= 0) {
+    const logisticsNo = (extractResult.values[logisticsColIdx] || '').trim();
     if (!logisticsNo) {
       qualityIssues.push('no_logistics_no');
     }
@@ -437,6 +432,28 @@ async function findNextEmptyRow(doc, config, state, fileId, sheetId, startRow, c
 }
 
 /**
+ * 查找追加位置：最后一个非空行的下一行
+ * 用于批量写入时确保不会覆盖间隙后的已有数据
+ */
+async function findAppendPosition(doc, config, state, fileId, sheetId, colCount, maxRowCount) {
+  let lastNonEmpty = 0; // 0 = header row
+  let currentRow = 1;
+  while (currentRow < maxRowCount) {
+    const endRow = Math.min(currentRow + EMPTY_ROW_BATCH_SIZE, maxRowCount);
+    const csv = await docProvider.readSheetCsv(doc, config, state, fileId, sheetId, endRow, colCount, currentRow);
+    const lines = csv.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const cells = parseCsvLine(lines[i]);
+      if (cells.some(c => c && c.trim())) {
+        lastNonEmpty = currentRow + i;
+      }
+    }
+    currentRow += EMPTY_ROW_BATCH_SIZE;
+  }
+  return lastNonEmpty + 1;
+}
+
+/**
  * 执行写入
  * 逻辑源自 server.js 第 685-710 行
  * @param {Object} [headersInfo] readSheetHeaders 的返回值，复用 adapter/state/providerConfig/sheet 避免重复调用
@@ -469,8 +486,8 @@ async function executeWrite(config, doc, prepareResult, headersInfo) {
 
     return { success: true, row: actualRow, updateNum: result.updateNum, newRowValues: prepareResult.values };
   } catch (err) {
-    // 限流检测：捕获 RateLimitError，设置限流状态（到当天北京时间 23:59:59）
-    if (err && (err.isRateLimit || err instanceof RateLimitError)) {
+    // 限流检测：通过 isRateLimit 属性检测（跨模块更稳健，不依赖 instanceof）
+    if (err && err.isRateLimit) {
       writeQueue.setRateLimited();
       return { success: false, rateLimited: true, error: err.message };
     }
@@ -525,11 +542,15 @@ async function executeBatchWrite(config, doc, records, headersInfo) {
 
     // 批量写入新记录到连续空行
     if (newRecords.length > 0) {
-      const startRow = await findNextEmptyRow(
-        doc, config, state, writeDocId, sheetId,
-        newRecords[0].prepareResult.targetRow,
-        sheet.col_count, sheet.row_count
-      );
+      // 多条记录时使用 findAppendPosition 避免覆盖间隙后的已有数据
+      // 单条记录时仍用 findNextEmptyRow（性能更好，找到第一个空行即可）
+      const startRow = newRecords.length > 1
+        ? await findAppendPosition(doc, config, state, writeDocId, sheetId, sheet.col_count, sheet.row_count)
+        : await findNextEmptyRow(
+            doc, config, state, writeDocId, sheetId,
+            newRecords[0].prepareResult.targetRow,
+            sheet.col_count, sheet.row_count
+          );
       const rowsValues = newRecords.map(r => r.prepareResult.values);
 
       if (adapter.writeRows && newRecords.length > 1) {
@@ -581,4 +602,4 @@ async function executeBatchWrite(config, doc, records, headersInfo) {
   }
 }
 
-module.exports = { resolveTarget, readSheetHeaders, extractAndPrepare, findNextEmptyRow, executeWrite, executeBatchWrite, detectDuplicate };
+module.exports = { resolveTarget, readSheetHeaders, extractAndPrepare, findNextEmptyRow, findAppendPosition, executeWrite, executeBatchWrite, detectDuplicate };

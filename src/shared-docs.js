@@ -3,11 +3,36 @@
  * 提供与提供商无关的通用函数：CSV解析/序列化、记录搜索、状态管理、通用数据获取
  */
 
-// 读取单元格数据时限制的最大列数
-const MAX_COL_COUNT = 10;
+// 读取单元格数据时限制的最大列数（可通过环境变量覆盖）
+const MAX_COL_COUNT = parseInt(process.env.MAX_COL_COUNT, 10) || 10;
 
 // HTTP 请求统一超时（毫秒）
 const REQUEST_TIMEOUT = 60000;
+
+// ===================== 限流错误 =====================
+
+/**
+ * 限流错误：HTTP 429 或错误信息包含限流关键词时抛出
+ * 携带 isRateLimit 属性，便于上游通过属性检测捕获（跨模块更稳健）
+ */
+class RateLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.isRateLimit = true;
+  }
+}
+
+const RATE_LIMIT_KEYWORDS = ['限流', 'rate limit', 'too many requests', 'too many'];
+
+/**
+ * 检测文本是否包含限流关键词（不区分大小写）
+ */
+function isRateLimitMessage(text) {
+  if (!text) return false;
+  const lower = String(text).toLowerCase();
+  return RATE_LIMIT_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+}
 
 /**
  * 创建文档状态对象（适配器可传入额外字段）
@@ -277,6 +302,8 @@ async function fetchData(adapter, docConfig, providerConfig, cacheTTL) {
 module.exports = {
   MAX_COL_COUNT,
   REQUEST_TIMEOUT,
+  RateLimitError,
+  isRateLimitMessage,
   DEFAULT_FIELD_MAP,
   createDocState,
   makeGetDocState,

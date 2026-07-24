@@ -116,7 +116,7 @@ function ruleBasedExtract(headers, description) {
       description = description.substring(leadingMatch[1].length);
     } else {
       // 开头没有单号时，扫描所有token找快递单号（如"和旭数码 拼多多 9818039366588 破损理赔60.3元"）
-      const allTokens = description.split(/[\s，,、；;。！？!?]+/).filter(t => t.length > 0);
+      const allTokens = description.split(/[\s，,、；;。！？!?.:：'"()]+/).filter(t => t.length > 0);
       for (const t of allTokens) {
         // 纯数字10位以上 或 字母2-4位+数字8位以上
         if (/^\d{10,}$/.test(t) || /^[A-Za-z]{2,4}\d{8,}$/.test(t)) {
@@ -128,7 +128,7 @@ function ruleBasedExtract(headers, description) {
     }
   }
   
-  const tokens = description.split(/[\s，,、；;。！？!?]+/).filter(t => t.length > 0);
+  const tokens = description.split(/[\s，,、；;。！？!?.:：'"()]+/).filter(t => t.length > 0);
   let currentHeader = null;
   let valueParts = [];
   function flushCurrent() {

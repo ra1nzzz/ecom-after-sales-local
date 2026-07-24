@@ -106,7 +106,9 @@ function makeRequest(providerConfig, method, path, body) {
       res.on('data', chunk => { data += chunk; });
       res.on('end', () => {
         if (res.statusCode < 200 || res.statusCode >= 300) {
-          reject(new Error(`WPS API 返回错误状态码 ${res.statusCode}: ${data.substring(0, 500)}`));
+          const err = new Error(`WPS API 返回错误状态码 ${res.statusCode}: ${data.substring(0, 500)}`);
+          err.statusCode = res.statusCode;
+          reject(err);
           return;
         }
         try {
@@ -163,7 +165,8 @@ async function getSheetList(providerConfig, state, fileId) {
     }
   } catch (err) {
     // 鉴权/签名错误不应被静默吞掉
-    if (err.statusCode === 401 || err.statusCode === 403 || (err.message && err.message.includes('鉴权'))) {
+    if (err.statusCode === 401 || err.statusCode === 403 ||
+        (err.message && (err.message.includes('401') || err.message.includes('403') || err.message.includes('鉴权')))) {
       throw new Error(`金山文档鉴权失败: ${err.message}，请检查 App ID/App Key/Access Token 配置`);
     }
     // 其他错误（接口不可用等）- 回退到虚拟工作表

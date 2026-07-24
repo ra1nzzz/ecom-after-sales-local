@@ -73,6 +73,13 @@ function callApi(credentials, method, bodyParams) {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
       res.on('end', () => {
+        // 401/403 鉴权错误直接抛出，不回退
+        if (res.statusCode === 401 || res.statusCode === 403) {
+          const err = new Error(`旺店通API鉴权失败(HTTP ${res.statusCode}): ${data.substring(0, 200)}`);
+          err.statusCode = res.statusCode;
+          reject(err);
+          return;
+        }
         try {
           const json = JSON.parse(data);
           resolve(json);
@@ -84,6 +91,12 @@ function callApi(credentials, method, bodyParams) {
 
     req.on('error', (e) => {
       reject(new Error('旺店通API请求失败: ' + e.message));
+    });
+
+    // 30秒超时，防止API无响应时引擎永久卡死
+    req.setTimeout(30000, () => {
+      req.destroy();
+      reject(new Error('旺店通API请求超时(30s)'));
     });
 
     req.write(bodyContent);

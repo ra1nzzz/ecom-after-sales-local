@@ -112,12 +112,12 @@ function loadLogs() {
 }
 
 /**
- * 落盘持久化
+ * 落盘持久化（异步版，不阻塞事件循环）
  */
-function flush() {
+async function flush() {
   if (!dirty) return;
   try {
-    fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2), 'utf-8');
+    await fs.promises.writeFile(LOG_FILE, JSON.stringify(logs, null, 2), 'utf-8');
     dirty = false;
   } catch (err) {
     console.error('[logger] 日志落盘失败:', err.message);
@@ -127,12 +127,12 @@ function flush() {
 /**
  * 关闭：落盘并停止定时器
  */
-function shutdown() {
+async function shutdown() {
   if (flushTimer) {
     clearInterval(flushTimer);
     flushTimer = null;
   }
-  flush();
+  await flush();
 }
 
 module.exports = { init, log, getLogs, clearLogs, flush, shutdown };

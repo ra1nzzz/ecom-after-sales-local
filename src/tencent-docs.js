@@ -15,6 +15,8 @@ const {
   makeClearCache,
   MAX_COL_COUNT,
   REQUEST_TIMEOUT,
+  RateLimitError,
+  isRateLimitMessage,
   parseCsvLine,
   parseSheetCsv,
   searchRecords,
@@ -27,31 +29,6 @@ const clearCache = makeClearCache(getDocState, (state) => {
   state.mcpSessionId = null;
   state.initPromise = null;
 });
-
-// ---- 限流错误 ----
-
-/**
- * 限流错误：HTTP 429 或错误信息包含限流关键词时抛出
- * 携带 isRateLimit 属性，便于上游通过属性检测捕获（跨模块更稳健）
- */
-class RateLimitError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'RateLimitError';
-    this.isRateLimit = true;
-  }
-}
-
-const RATE_LIMIT_KEYWORDS = ['限流', 'rate limit', 'too many requests', 'too many'];
-
-/**
- * 检测文本是否包含限流关键词（不区分大小写）
- */
-function isRateLimitMessage(text) {
-  if (!text) return false;
-  const lower = String(text).toLowerCase();
-  return RATE_LIMIT_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
-}
 
 // ---- MCP 内部通信函数（不直接导出） ----
 function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {

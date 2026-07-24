@@ -1,8 +1,19 @@
 const OpenAI = require('openai');
 
+// 客户端缓存：相同 provider+baseUrl+apiKey 复用 OpenAI 实例，减少 TLS 握手开销
+const clientCache = new Map();
+
 function createLLMClient(llmConfig) {
   if (!llmConfig.apiKey && llmConfig.provider !== 'ollama') {
     throw new Error(`LLM API Key 未配置 (provider: ${llmConfig.provider})`);
+  }
+
+  const cacheKey = `${llmConfig.provider}-${llmConfig.baseUrl}-${llmConfig.apiKey || 'ollama'}`;
+  if (clientCache.has(cacheKey)) {
+    const cached = clientCache.get(cacheKey);
+    // 模型名可能变更，更新缓存中的 model
+    cached.model = llmConfig.model;
+    return cached;
   }
 
   const client = new OpenAI({
@@ -12,11 +23,13 @@ function createLLMClient(llmConfig) {
     maxRetries: 2
   });
 
-  return {
+  const clientObj = {
     client,
     model: llmConfig.model,
     provider: llmConfig.provider
   };
+  clientCache.set(cacheKey, clientObj);
+  return clientObj;
 }
 
 async function chatJSON(llmConfig, systemPrompt, userMessage) {

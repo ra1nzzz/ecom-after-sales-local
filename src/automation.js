@@ -48,6 +48,11 @@ let engine = {
   watchdogTimer: null          // 自愈看门狗定时器
 };
 
+// 搜索代际计数器：防止看门狗强制重置后，旧搜索的 finally 块覆盖新搜索的 busy 状态
+let _searchGeneration = 0;
+// persistState 互斥：串行化持久化操作，避免并发写入文件
+let _persistChain = Promise.resolve();
+
 /**
  * 初始化引擎：加载持久化状态，若配置启用则自动启动
  */
@@ -95,6 +100,7 @@ function start(config) {
       if (stuckMs > BUSY_TIMEOUT) {
         console.error(`[automation] 看门狗: busy已卡死${Math.round(stuckMs / 1000)}秒，强制重置`);
         logger.log('system', `看门狗强制重置busy（卡死${Math.round(stuckMs / 1000)}秒）`, {});
+        _searchGeneration++;  // 递增代际，使旧搜索的 finally 块不再覆盖新搜索的 busy
         engine.busy = false;
         engine.busySince = 0;
         engine.lastError = 'busy卡死已自动恢复';
@@ -218,6 +224,9 @@ async function searchAndProcess() {
 
   engine.busy = true;
   engine.busySince = Date.now();
+  // 捕获当前搜索代际：看门狗强制重置会递增 _searchGeneration，
+  // 使旧搜索的 finally 块不再覆盖新搜索的 busy 状态
+  const myGeneration = _searchGeneration;
   try {
     const keyword = gcfg.keyword || '理赔';
     const resp = await guanchen.searchMessages(gcfg, keyword, SEARCH_LIMIT);
@@ -344,8 +353,11 @@ async function searchAndProcess() {
     });
     // 不停止引擎，等待下个周期重试
   } finally {
-    engine.busy = false;
-    engine.busySince = 0;
+    // 仅当当前代际未被看门狗递增时才清除 busy，防止旧搜索覆盖新搜索状态
+    if (myGeneration === _searchGeneration) {
+      engine.busy = false;
+      engine.busySince = 0;
+    }
   }
 }
 
@@ -713,9 +725,20 @@ async function reExtractMessage(messageId, latestConfig) {
 }
 
 /**
- * 持久化状态到文件
+ * 持久化状态到文件（互斥版）
+ * 通过 Promise 链串行化，避免并发调用导致文件写入竞争
  */
-async function persistState() {
+function persistState() {
+  _persistChain = _persistChain.then(() => _doPersistState()).catch(err => {
+    console.error('[automation] persistState 链异常:', err.message);
+  });
+  return _persistChain;
+}
+
+/**
+ * 实际持久化逻辑
+ */
+async function _doPersistState() {
   if (!engine.dirty && !writeQueue.isDirty()) return;
   try {
     trimProcessedIds();

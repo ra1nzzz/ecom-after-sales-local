@@ -128,7 +128,10 @@ async function handleRequest(req, res) {
   if (url.pathname === '/' || url.pathname === '/index.html') {
     try {
       const html = getIndexHtml();
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache, no-store, must-revalidate'
+      });
       res.end(html);
     } catch { res.writeHead(404); res.end('Not Found'); }
     return;
@@ -294,19 +297,22 @@ async function handleRequest(req, res) {
         };
       }
 
-      saveConfig(newConfig);
-      config = loadConfig();
-      logger.log('config_save', '配置已保存', { hasGuanchen: !!config.guanchen, hasWangdian: !!(config.wangdian && config.wangdian.sid) });
-      for (const doc of config.documents) {
-        docProvider.clearCache(doc, doc.fileId);
-      }
-      // 热更新运行中的引擎配置（无需停止再启动）
-      automation.updateConfig(config);
-      // 清理旧字段，避免混淆
-      if ('defaultDocumentId' in newConfig) {
-        delete newConfig.defaultDocumentId;
-      }
-      sendJSON(res, 200, { success: true, message: '配置已保存' });
+      saveConfig(newConfig).then(() => {
+        config = loadConfig();
+        logger.log('config_save', '配置已保存', { hasGuanchen: !!config.guanchen, hasWangdian: !!(config.wangdian && config.wangdian.sid) });
+        for (const doc of config.documents) {
+          docProvider.clearCache(doc, doc.fileId);
+        }
+        // 热更新运行中的引擎配置（无需停止再启动）
+        automation.updateConfig(config);
+        // 清理旧字段，避免混淆
+        if ('defaultDocumentId' in newConfig) {
+          delete newConfig.defaultDocumentId;
+        }
+        sendJSON(res, 200, { success: true, message: '配置已保存' });
+      }).catch(err => {
+        sendJSON(res, 500, { success: false, error: err.message });
+      });
     } catch (err) {
       sendJSON(res, 500, { success: false, error: err.message });
     }
@@ -1002,7 +1008,7 @@ server.listen(PORT, HOST, async () => {
     try {
       await automation.shutdown();
       logger.log('system', '服务器关闭', { signal });
-      logger.shutdown();
+      await logger.shutdown();
     } catch (err) {
       console.error('[server] 优雅关闭出错:', err.message);
     }

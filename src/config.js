@@ -102,8 +102,8 @@ function loadConfig() {
   return JSON.parse(JSON.stringify(DEFAULT_CONFIG));
 }
 
-function saveConfig(config) {
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
+async function saveConfig(config) {
+  await fs.promises.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2), 'utf-8');
   console.log('[config] 配置已保存');
 }
 
