@@ -9,6 +9,8 @@ const { extractRowData } = require('./extractor');
 const { autoMatchWdtOrder, mergeWdtData, queryOrder, queryWarehouse } = require('./wangdian');
 const { getDocumentById } = require('./config');
 const { parseCsvLine } = require('./shared-docs');
+const { RateLimitError } = require('./tencent-docs');
+const writeQueue = require('./write-queue');
 
 const HEADER_SAMPLE_ROW_LIMIT = 50;
 const EMPTY_ROW_BATCH_SIZE = 50;
@@ -467,8 +469,116 @@ async function executeWrite(config, doc, prepareResult, headersInfo) {
 
     return { success: true, row: actualRow, updateNum: result.updateNum, newRowValues: prepareResult.values };
   } catch (err) {
+    // 限流检测：捕获 RateLimitError，设置限流状态（到当天北京时间 23:59:59）
+    if (err && (err.isRateLimit || err instanceof RateLimitError)) {
+      writeQueue.setRateLimited();
+      return { success: false, rateLimited: true, error: err.message };
+    }
     return { success: false, error: err.message };
   }
 }
 
-module.exports = { resolveTarget, readSheetHeaders, extractAndPrepare, findNextEmptyRow, executeWrite, detectDuplicate };
+/**
+ * 批量写入多条记录
+ * 新记录写入连续空行（优先使用适配器 writeRows 单次 API 调用）；
+ * 查重 merge 记录逐条写入到各自指定的目标行。
+ * @param {Object} config 配置
+ * @param {Object} doc 文档配置
+ * @param {Array<{ message: object, prepareResult: object }>} records 待写记录
+ * @param {Object} headersInfo readSheetHeaders 返回值（复用 adapter/state/sheet）
+ * @returns {{ success: boolean, rateLimited?: boolean, error?: string, written?: number, results?: Array }}
+ */
+async function executeBatchWrite(config, doc, records, headersInfo) {
+  // results 在 try 外声明，以便 catch 中返回已成功写入的部分结果
+  const results = [];
+  try {
+    if (!records || records.length === 0) {
+      return { success: true, written: 0, results: [] };
+    }
+
+    const firstPrepare = records[0].prepareResult;
+    const { targetFileId, sheetId } = firstPrepare;
+    const writeDocId = targetFileId || doc.fileId;
+
+    const adapter = (headersInfo && headersInfo.adapter) || docProvider.getAdapter(doc);
+    const providerConfig = (headersInfo && headersInfo.providerConfig) || docProvider.getProviderConfig(config, doc);
+    const state = (headersInfo && headersInfo.state) || adapter.getDocState(writeDocId);
+
+    let sheet = (headersInfo && headersInfo.sheet) || null;
+    if (!sheet) {
+      const sheets = await adapter.getSheetList(providerConfig, state, writeDocId);
+      sheet = sheets.find(s => s.sheet_id === sheetId);
+      if (!sheet) return { success: false, error: '未找到指定工作表' };
+    }
+
+    // 分离：新记录（连续空行批量写入）和 merge 记录（逐条写入到指定行）
+    const newRecords = [];
+    const mergeRecords = [];
+    for (const rec of records) {
+      const dup = rec.prepareResult.duplicate;
+      if (dup && dup.type === 'merge') {
+        mergeRecords.push(rec);
+      } else {
+        newRecords.push(rec);
+      }
+    }
+
+    // 批量写入新记录到连续空行
+    if (newRecords.length > 0) {
+      const startRow = await findNextEmptyRow(
+        doc, config, state, writeDocId, sheetId,
+        newRecords[0].prepareResult.targetRow,
+        sheet.col_count, sheet.row_count
+      );
+      const rowsValues = newRecords.map(r => r.prepareResult.values);
+
+      if (adapter.writeRows && newRecords.length > 1) {
+        // 单次 API 调用写入多行（set_range_value 原子操作）
+        await adapter.writeRows(providerConfig, state, writeDocId, sheetId, startRow, rowsValues);
+      } else {
+        // 回退：逐条写入连续行（适配器不支持批量或只有单条）
+        for (let i = 0; i < newRecords.length; i++) {
+          await adapter.writeRow(providerConfig, state, writeDocId, sheetId, startRow + i, rowsValues[i]);
+        }
+      }
+
+      for (let i = 0; i < newRecords.length; i++) {
+        results.push({
+          messageId: newRecords[i].message.id,
+          row: startRow + i,
+          success: true,
+          newRowValues: newRecords[i].prepareResult.values
+        });
+      }
+    }
+
+    // 逐条写入 merge 记录到各自的目标行
+    for (const rec of mergeRecords) {
+      const pr = rec.prepareResult;
+      const actualRow = pr.targetRow;
+      await adapter.writeRow(providerConfig, state, writeDocId, sheetId, actualRow, pr.values);
+      results.push({
+        messageId: rec.message.id,
+        row: actualRow,
+        success: true,
+        newRowValues: pr.values
+      });
+    }
+
+    if (results.length > 0) {
+      adapter.clearCache(writeDocId);
+    }
+
+    return { success: true, written: results.length, results };
+  } catch (err) {
+    // 限流：捕获 RateLimitError，设置限流状态
+    if (err && (err.isRateLimit || err instanceof RateLimitError)) {
+      writeQueue.setRateLimited();
+      return { success: false, rateLimited: true, error: err.message, results };
+    }
+    // 其他错误：返回已成功写入的部分结果，调用方据此决定哪些需要重新入队
+    return { success: false, error: err.message, results };
+  }
+}
+
+module.exports = { resolveTarget, readSheetHeaders, extractAndPrepare, findNextEmptyRow, executeWrite, executeBatchWrite, detectDuplicate };

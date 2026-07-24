@@ -28,6 +28,31 @@ const clearCache = makeClearCache(getDocState, (state) => {
   state.initPromise = null;
 });
 
+// ---- 限流错误 ----
+
+/**
+ * 限流错误：HTTP 429 或错误信息包含限流关键词时抛出
+ * 携带 isRateLimit 属性，便于上游通过属性检测捕获（跨模块更稳健）
+ */
+class RateLimitError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.isRateLimit = true;
+  }
+}
+
+const RATE_LIMIT_KEYWORDS = ['限流', 'rate limit', 'too many requests', 'too many'];
+
+/**
+ * 检测文本是否包含限流关键词（不区分大小写）
+ */
+function isRateLimitMessage(text) {
+  if (!text) return false;
+  const lower = String(text).toLowerCase();
+  return RATE_LIMIT_KEYWORDS.some(kw => lower.includes(kw.toLowerCase()));
+}
+
 // ---- MCP 内部通信函数（不直接导出） ----
 function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
   return new Promise((resolve, reject) => {
@@ -60,6 +85,11 @@ function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => {
+        // 限流检测：HTTP 429 或响应体包含限流关键词
+        if (res.statusCode === 429 || isRateLimitMessage(data)) {
+          reject(new RateLimitError(`腾讯文档限流 (HTTP ${res.statusCode}): ${data.substring(0, 200)}`));
+          return;
+        }
         if (res.statusCode < 200 || res.statusCode >= 300) {
           reject(new Error(`MCP API 返回错误状态码 ${res.statusCode}: ${data.substring(0, 200)}`));
           return;
@@ -67,7 +97,13 @@ function callMcpApi(mcpUrl, apiKey, method, params, sessionId) {
         try {
           const parsed = JSON.parse(data);
           if (parsed.error) {
-            reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+            const errMsg = parsed.error.message || JSON.stringify(parsed.error);
+            // 限流检测：JSON-RPC 错误信息包含限流关键词
+            if (isRateLimitMessage(errMsg)) {
+              reject(new RateLimitError(`腾讯文档限流: ${errMsg}`));
+            } else {
+              reject(new Error(errMsg));
+            }
           } else {
             resolve({ result: parsed.result, sessionId: newSessionId });
           }
@@ -208,6 +244,55 @@ async function writeRow(providerConfig, state, fileId, sheetId, startRow, values
   }
 }
 
+/**
+ * 批量写入多行（单次 API 调用）
+ * 腾讯文档 sheet.set_range_value 支持一次提交多行多列的单元格数组
+ * @param {number} startRow 第一行的行号（0-based）
+ * @param {Array<Array>} rowsValues 多行的值数组，每个元素是一行的 values
+ * @returns {{ updateNum: number, rowCount: number }}
+ */
+async function writeRows(providerConfig, state, fileId, sheetId, startRow, rowsValues) {
+  if (!rowsValues || rowsValues.length === 0) {
+    return { updateNum: 0, rowCount: 0 };
+  }
+  const { mcpUrl, apiKey } = providerConfig;
+  await init(providerConfig, state);
+
+  // 构建多行单元格：每行记录的行号连续递增（0-based）
+  const cellValues = [];
+  rowsValues.forEach((values, rowOffset) => {
+    const row = startRow + rowOffset;
+    values.forEach((val, col) => {
+      cellValues.push({
+        row: row,
+        col: col,
+        value_type: 'STRING',
+        string_value: String(val)
+      });
+    });
+  });
+
+  const args = {
+    file_id: fileId,
+    sheet_id: sheetId,
+    values: cellValues
+  };
+
+  const { result, sessionId } = await callTool(
+    mcpUrl, apiKey, state.mcpSessionId,
+    'sheet.set_range_value', args
+  );
+  state.mcpSessionId = sessionId;
+
+  const text = extractText(result);
+  try {
+    const parsed = JSON.parse(text);
+    return { updateNum: parsed.update_num || cellValues.length, rowCount: rowsValues.length };
+  } catch (e) {
+    return { updateNum: cellValues.length, rowCount: rowsValues.length };
+  }
+}
+
 // ---- 向后兼容封装 ----
 
 // 旧签名 initMcp(mcpUrl, apiKey, state) → 委托给统一接口 init
@@ -221,6 +306,7 @@ const tencentAdapter = {
   getSheetList,
   readSheetCsv,
   writeRow,
+  writeRows,
   findEmptyRow: null, // 使用 server.js 中的默认批次扫描实现
   getDocState,
   clearCache
@@ -238,6 +324,7 @@ module.exports = {
   getSheetList,
   readSheetCsv,
   writeRow,
+  writeRows,
   findEmptyRow: null,
   getDocState,
   clearCache,
@@ -249,5 +336,7 @@ module.exports = {
   // 向后兼容：MCP 专用函数
   initMcp,
   callTool,
-  extractText
+  extractText,
+  // 限流错误
+  RateLimitError
 };

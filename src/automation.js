@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const guanchen = require('./guanchen');
 const pipeline = require('./write-pipeline');
+const writeQueue = require('./write-queue');
 const logger = require('./logger');
 
 const STATE_FILE = path.join(__dirname, '..', 'automation-state.json');
@@ -170,7 +171,10 @@ function getStatus() {
     stats: { ...engine.stats },
     pendingCount: engine.pendingMessages.size,
     processedCount: engine.processedIds.size,
-    blockedCount: engine.blockedIds.size
+    blockedCount: engine.blockedIds.size,
+    writeQueueSize: writeQueue.getQueueSize(),
+    rateLimited: writeQueue.isRateLimited(),
+    rateLimitedUntil: writeQueue.getRateLimitedUntil()
   };
 }
 
@@ -304,9 +308,27 @@ async function searchAndProcess() {
       engine.lastError = null;
     }
 
+    // 限流恢复检查：如果限流已过期且队列有积压，先批量写入积压数据
+    if (!writeQueue.isRateLimited() && writeQueue.getQueueSize() > 0) {
+      console.log(`[automation] 限流已恢复，批量写入积压的 ${writeQueue.getQueueSize()} 条数据`);
+      logger.log('auto_write', `限流恢复，批量写入积压数据`, { count: writeQueue.getQueueSize() });
+      await flushWriteBatch(doc, target, headersInfo);
+      // 重新过滤：已被积压写入处理的消息不再重复处理
+      const beforeRefilter = newMessages.length;
+      newMessages = newMessages.filter(m => !engine.processedIds.has(m.id));
+      if (beforeRefilter !== newMessages.length) {
+        console.log(`[automation] 积压写入后重新过滤，剩余 ${newMessages.length} 条新消息`);
+      }
+    }
+
     // 逐条处理新消息
     for (const message of newMessages) {
       await processMessage(message, doc, target, headersInfo);
+    }
+
+    // 刷新本轮积攒的剩余批次（未攒满 MAX_WRITE_BATCH 的部分）
+    if (!writeQueue.isRateLimited() && writeQueue.getQueueSize() > 0) {
+      await flushWriteBatch(doc, target, headersInfo);
     }
 
     // 清理超期待审消息
@@ -335,6 +357,12 @@ async function processMessage(message, doc, target, headersInfo) {
   const content = message.content || '';
 
   console.log(`[automation] 处理消息 #${messageId}: ${content.substring(0, 60)}...`);
+
+  // 如果消息已在写入队列中（上一轮批量写入失败重试中），跳过提取避免重复处理
+  if (writeQueue.hasMessage(messageId)) {
+    console.log(`[automation] 消息 #${messageId} 已在写入队列中，跳过提取`);
+    return;
+  }
 
   try {
     const prepareResult = await pipeline.extractAndPrepare(
@@ -378,25 +406,22 @@ async function processMessage(message, doc, target, headersInfo) {
     const hasQualityIssue = qualityIssues.length > 0;
 
     if (engine.config.guanchen.autoConfirm && !hasQualityIssue) {
-      // 全自动模式 + 质量检查通过：直接写入
-      const writeResult = await pipeline.executeWrite(engine.config, doc, prepareResult, headersInfo);
-      if (writeResult.success) {
+      // 全自动模式 + 质量检查通过
+      if (writeQueue.isRateLimited()) {
+        // 限流期：入队暂存，标记已处理避免重复入池，等待次日恢复批写
+        writeQueue.enqueue({ message, prepareResult });
         addProcessedId(messageId);
-        engine.stats.totalAutoWritten++;
         engine.dirty = true;
-        // 更新内存快照：将新行追加到 parsedRows，避免同批次查重失效
-        if (headersInfo.parsedRows && writeResult.newRowValues) {
-          headersInfo.parsedRows.push(writeResult.newRowValues);
-        }
-        logger.log('auto_write', `消息 #${messageId} 自动写入成功`, { row: writeResult.row });
-        console.log(`[automation] 消息 #${messageId} 已自动写入`);
-      } else {
-        // 写入失败 → 不加processedIds，下轮重试
-        engine.stats.totalWriteFailed++;
-        engine.stats.totalFailed++;
-        engine.dirty = true;
-        logger.log('auto_write', `消息 #${messageId} 自动写入失败`, { error: writeResult.error });
-        console.error(`[automation] 消息 #${messageId} 写入失败:`, writeResult.error);
+        logger.log('auto_write', `消息 #${messageId} 限流期暂存到写入队列`, { queueSize: writeQueue.getQueueSize() });
+        console.log(`[automation] 消息 #${messageId} 限流期暂存到写入队列（队列 ${writeQueue.getQueueSize()} 条）`);
+        return;
+      }
+      // 正常模式：入队攒批，攒够 MAX_WRITE_BATCH 条后立即批量写入
+      writeQueue.enqueue({ message, prepareResult });
+      engine.dirty = true;
+      console.log(`[automation] 消息 #${messageId} 已加入写入批次（队列 ${writeQueue.getQueueSize()}/${writeQueue.MAX_WRITE_BATCH}）`);
+      if (writeQueue.getQueueSize() >= writeQueue.MAX_WRITE_BATCH) {
+        await flushOneBatch(doc, target, headersInfo);
       }
     } else {
       // 半自动模式 或 质量检查未通过：加入待审队列
@@ -424,6 +449,68 @@ async function processMessage(message, doc, target, headersInfo) {
     engine.stats.totalFailed++;
     engine.dirty = true;
     console.error(`[automation] 消息 #${messageId} 处理异常:`, err.message);
+  }
+}
+
+/**
+ * 刷新一个批次（最多 MAX_WRITE_BATCH 条）的写入队列
+ * 成功时将已写入消息标记为已处理；失败时将未写入记录回填到队首
+ * @returns {{ ok?: boolean, stopped?: boolean, done?: boolean }}
+ */
+async function flushOneBatch(doc, target, headersInfo) {
+  if (writeQueue.isRateLimited()) return { stopped: true };
+  if (writeQueue.getQueueSize() === 0) return { done: true };
+
+  const batch = writeQueue.dequeueBatch(writeQueue.MAX_WRITE_BATCH);
+  const batchResult = await pipeline.executeBatchWrite(engine.config, doc, batch, headersInfo);
+
+  if (batchResult.success) {
+    // 全部成功：标记已处理，更新内存快照
+    for (const r of batchResult.results) {
+      addProcessedId(r.messageId);
+      engine.stats.totalAutoWritten++;
+      if (headersInfo.parsedRows && r.newRowValues) {
+        headersInfo.parsedRows.push(r.newRowValues);
+      }
+      logger.log('auto_write', `消息 #${r.messageId} 批量写入成功`, { row: r.row });
+    }
+    engine.dirty = true;
+    console.log(`[automation] 批量写入成功 ${batchResult.results.length} 条`);
+    return { ok: true };
+  }
+
+  // 失败（限流或其他错误）：已写入的标记已处理，未写入的回填队首
+  const writtenIds = new Set((batchResult.results || []).map(r => r.messageId));
+  for (const rec of batch) {
+    if (writtenIds.has(rec.message.id)) {
+      addProcessedId(rec.message.id);
+      engine.stats.totalAutoWritten++;
+      if (headersInfo.parsedRows && rec.prepareResult.values) {
+        headersInfo.parsedRows.push(rec.prepareResult.values);
+      }
+      logger.log('auto_write', `消息 #${rec.message.id} 批量写入成功（部分）`, { row: rec.prepareResult.targetRow });
+    } else {
+      writeQueue.enqueueFront(rec);
+    }
+  }
+  engine.dirty = true;
+
+  if (batchResult.rateLimited) {
+    console.log(`[automation] 批量写入触发限流，${writeQueue.getQueueSize()} 条已入队等待次日恢复`);
+  } else {
+    console.error(`[automation] 批量写入失败: ${batchResult.error}`);
+    logger.log('auto_write', `批量写入失败`, { error: batchResult.error, requeued: batch.length - writtenIds.size });
+  }
+  return { stopped: true };
+}
+
+/**
+ * 持续刷新写入队列直到清空或遇到限流/错误
+ */
+async function flushWriteBatch(doc, target, headersInfo) {
+  while (!writeQueue.isRateLimited() && writeQueue.getQueueSize() > 0) {
+    const r = await flushOneBatch(doc, target, headersInfo);
+    if (r.stopped) break;
   }
 }
 
@@ -629,7 +716,7 @@ async function reExtractMessage(messageId, latestConfig) {
  * 持久化状态到文件
  */
 async function persistState() {
-  if (!engine.dirty) return;
+  if (!engine.dirty && !writeQueue.isDirty()) return;
   try {
     trimProcessedIds();
     trimBlockedIds();
@@ -643,10 +730,12 @@ async function persistState() {
         addedAt: item.addedAt
       })),
       stats: engine.stats,
-      lastSearchTime: engine.lastSearchTime
+      lastSearchTime: engine.lastSearchTime,
+      writeQueue: writeQueue.serialize()
     };
     await fs.promises.writeFile(STATE_FILE, JSON.stringify(state, null, 2), 'utf-8');
     engine.dirty = false;
+    writeQueue.markClean();
   } catch (err) {
     console.error('[automation] 状态持久化失败:', err.message);
   }
@@ -690,8 +779,11 @@ function loadState() {
     if (state.lastSearchTime) {
       engine.lastSearchTime = state.lastSearchTime;
     }
+    if (state.writeQueue) {
+      writeQueue.load(state.writeQueue);
+    }
 
-    console.log(`[automation] 状态已恢复: ${engine.processedIds.size} 条已处理, ${engine.blockedIds.size} 条屏蔽, ${engine.pendingMessages.size} 条待审`);
+    console.log(`[automation] 状态已恢复: ${engine.processedIds.size} 条已处理, ${engine.blockedIds.size} 条屏蔽, ${engine.pendingMessages.size} 条待审, ${writeQueue.getQueueSize()} 条待写入`);
   } catch (err) {
     console.error('[automation] 状态加载失败:', err.message);
   }
