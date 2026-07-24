@@ -5,3 +5,6 @@ automation-state.json
 automation-logs.json
 watchdog.log
 watchdog.old.log
+server.log
+server.log.bak
+check-warehouse.js
