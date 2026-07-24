@@ -116,7 +116,7 @@ function ruleBasedExtract(headers, description) {
       description = description.substring(leadingMatch[1].length);
     } else {
       // 开头没有单号时，扫描所有token找快递单号（如"和旭数码 拼多多 9818039366588 破损理赔60.3元"）
-      const allTokens = description.split(/[\s，,、；;]+/).filter(t => t.length > 0);
+      const allTokens = description.split(/[\s，,、；;。！？!?]+/).filter(t => t.length > 0);
       for (const t of allTokens) {
         // 纯数字10位以上 或 字母2-4位+数字8位以上
         if (/^\d{10,}$/.test(t) || /^[A-Za-z]{2,4}\d{8,}$/.test(t)) {
@@ -128,7 +128,7 @@ function ruleBasedExtract(headers, description) {
     }
   }
   
-  const tokens = description.split(/[\s，,、；;]+/).filter(t => t.length > 0);
+  const tokens = description.split(/[\s，,、；;。！？!?]+/).filter(t => t.length > 0);
   let currentHeader = null;
   let valueParts = [];
   function flushCurrent() {
@@ -254,17 +254,37 @@ function ruleBasedExtract(headers, description) {
   }
 
   // ========== 全局兜底：金额提取 ==========
-  // 如果货值字段仍为空，扫描描述中所有"数字元"模式
+  // 如果货值字段仍为空，扫描描述中的金额
   const amountHeader = headers.find(h => h.includes('货值') || h.includes('金额') || h.includes('价格'));
   if (amountHeader && (!result[amountHeader] || !String(result[amountHeader]).trim())) {
+    // 1. 优先匹配带"元"的金额
     const allAmounts = description.match(/(\d+\.?\d*)元/g);
     if (allAmounts && allAmounts.length > 0) {
-      // 过滤掉已提取为运费的金额，避免运费被误填为货值
       const candidates = allAmounts
         .map(a => a.replace('元', ''))
         .filter(a => a !== freightValue);
       if (candidates.length > 0) {
         result[amountHeader] = candidates[candidates.length - 1];
+      }
+    }
+    // 2. 无"元"字时，匹配看起来像金额的短数字（排除快递单号等长数字）
+    if (!result[amountHeader] || !String(result[amountHeader]).trim()) {
+      const logisticsNo = result[logisticsHeader] || '';
+      const allNumbers = description.match(/\d+\.\d+|\d+/g);
+      if (allNumbers) {
+        const candidates = allNumbers.filter(n => {
+          if (n === freightValue) return false;        // 排除运费
+          if (n === logisticsNo) return false;          // 排除快递单号
+          if (/^\d{8,}$/.test(n)) return false;         // 排除8位以上纯数字（单号）
+          return true;
+        });
+        // 优先带小数点的（如"60.3"几乎一定是金额）
+        const decimalCandidates = candidates.filter(n => n.includes('.'));
+        if (decimalCandidates.length > 0) {
+          result[amountHeader] = decimalCandidates[decimalCandidates.length - 1];
+        } else if (candidates.length > 0) {
+          result[amountHeader] = candidates[candidates.length - 1];
+        }
       }
     }
   }
