@@ -114,10 +114,21 @@ function ruleBasedExtract(headers, description) {
       result[logisticsHeader] = leadingMatch[1];
       // 从描述中移除已提取的单号，避免后续误匹配
       description = description.substring(leadingMatch[1].length);
+    } else {
+      // 开头没有单号时，扫描所有token找快递单号（如"和旭数码 拼多多 9818039366588 破损理赔60.3元"）
+      const allTokens = description.split(/[\s，,、；;]+/).filter(t => t.length > 0);
+      for (const t of allTokens) {
+        // 纯数字10位以上 或 字母2-4位+数字8位以上
+        if (/^\d{10,}$/.test(t) || /^[A-Za-z]{2,4}\d{8,}$/.test(t)) {
+          result[logisticsHeader] = t;
+          description = description.replace(t, ' ');
+          break;
+        }
+      }
     }
   }
   
-  const tokens = description.split(/\s+/).filter(t => t.length > 0);
+  const tokens = description.split(/[\s，,、；;]+/).filter(t => t.length > 0);
   let currentHeader = null;
   let valueParts = [];
   function flushCurrent() {
@@ -138,7 +149,11 @@ function ruleBasedExtract(headers, description) {
     if (!matchedHeader) {
       for (const h of sortedHeaders) {
         if (token.length > h.length && token.startsWith(h)) {
-          matchedHeader = headerMap[h]; remainder = token.substring(h.length); break;
+          const afterHeader = token.substring(h.length);
+          // 前缀后必须跟纯数字/字母数字组合（如"SF123"），不能跟中文（如"运费7元丢件理赔60.3元"）
+          if (/^[A-Za-z0-9]{2,}$/.test(afterHeader) || /^\d+\.?\d*元?$/.test(afterHeader)) {
+            matchedHeader = headerMap[h]; remainder = afterHeader; break;
+          }
         }
       }
     }
@@ -148,7 +163,11 @@ function ruleBasedExtract(headers, description) {
         if (headers.includes(target)) {
           if (token === alias) { matchedHeader = target; remainder = ''; break; }
           if (token.length > alias.length && token.startsWith(alias)) {
-            matchedHeader = target; remainder = token.substring(alias.length); break;
+            const afterAlias = token.substring(alias.length);
+            // 别名后必须跟纯数字/数字+元（如"运费7"/"运费7元"），不能跟中文（如"运费7元丢件理赔60.3元"）
+            if (/^\d+\.?\d*元?$/.test(afterAlias)) {
+              matchedHeader = target; remainder = afterAlias; break;
+            }
           }
         }
       }
@@ -165,15 +184,16 @@ function ruleBasedExtract(headers, description) {
         }
       }
     }
-    // 5. 特殊模式：理赔类型+金额（如 "丢件理赔54.9元"）
+    // 5. 特殊模式：理赔类型+金额（如 "丢件理赔54.9元" 或 "就地销毁登记理赔60.3元"）
     if (!matchedHeader) {
+      let claimMatched = false;
       for (const ct of claimTypes) {
         if (token.includes(ct)) {
           const claimHeader = headers.find(h => h.includes('理赔类型'));
           if (claimHeader) {
             result[claimHeader] = ct;
-            // 提取剩余部分中的金额
-            const rest = token.replace(ct, '').replace('理赔', '');
+            // 提取剩余部分中的金额（先移除运费部分，避免运费被误识为货值）
+            const rest = token.replace(ct, '').replace('理赔', '').replace(/运费\d+\.?\d*元?/g, '');
             // 优先匹配带"元"的金额（如"38.5元"），避免误匹配快递单号
             const amountWithUnit = rest.match(/(\d+\.?\d*)元/);
             const amountMatch = amountWithUnit || rest.match(/(\d+\.?\d*)$/);
@@ -181,10 +201,23 @@ function ruleBasedExtract(headers, description) {
               const amountHeader = headers.find(h => h.includes('货值'));
               if (amountHeader) result[amountHeader] = amountMatch[1];
             }
-            matchedHeader = null; // 已处理，不进入常规流程
+            claimMatched = true;
             break;
           }
         }
+      }
+      // 5b. 未匹配到具体理赔类型，但包含"理赔"关键字 → 仍尝试提取金额
+      if (!claimMatched && token.includes('理赔')) {
+        const rest = token.replace('理赔', '').replace('登记', '').replace(/运费\d+\.?\d*元?/g, '');
+        const amountWithUnit = rest.match(/(\d+\.?\d*)元/);
+        const amountMatch = amountWithUnit || rest.match(/(\d+\.?\d*)$/);
+        if (amountMatch) {
+          const amountHeader = headers.find(h => h.includes('货值'));
+          if (amountHeader && !result[amountHeader]) result[amountHeader] = amountMatch[1];
+        }
+      }
+      if (claimMatched) {
+        matchedHeader = null; // 已处理，不进入常规流程
       }
     }
     // 6. 特殊模式：字段名+数字（如 "运费7元" 或 "运费7"）
@@ -208,6 +241,34 @@ function ruleBasedExtract(headers, description) {
     }
   }
   flushCurrent();
+
+  // ========== 全局兜底：运费提取（先于金额，便于排除） ==========
+  const freightHeader = headers.find(h => h.includes('运费'));
+  let freightValue = '';
+  if (freightHeader && (!result[freightHeader] || !String(result[freightHeader]).trim())) {
+    const freightMatch = description.match(/运费\s*(\d+\.?\d*)/);
+    if (freightMatch) {
+      freightValue = freightMatch[1];
+      result[freightHeader] = freightValue;
+    }
+  }
+
+  // ========== 全局兜底：金额提取 ==========
+  // 如果货值字段仍为空，扫描描述中所有"数字元"模式
+  const amountHeader = headers.find(h => h.includes('货值') || h.includes('金额') || h.includes('价格'));
+  if (amountHeader && (!result[amountHeader] || !String(result[amountHeader]).trim())) {
+    const allAmounts = description.match(/(\d+\.?\d*)元/g);
+    if (allAmounts && allAmounts.length > 0) {
+      // 过滤掉已提取为运费的金额，避免运费被误填为货值
+      const candidates = allAmounts
+        .map(a => a.replace('元', ''))
+        .filter(a => a !== freightValue);
+      if (candidates.length > 0) {
+        result[amountHeader] = candidates[candidates.length - 1];
+      }
+    }
+  }
+
   return result;
 }
 
